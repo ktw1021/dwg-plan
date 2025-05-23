@@ -1,0 +1,5 @@
+{
+  "verbose": true,
+  "ignore": ["*.json", "results/", "uploads/", "jobs/"],
+  "delay": 2500
+} 
