@@ -324,6 +324,7 @@ const parseDxfFile = async (dxfFilePath) => {
     
     // 엔티티 추출
     const entities = [];
+    const entityStats = {}; // 엔티티 타입별 통계
     
     if (dxf.entities && Array.isArray(dxf.entities)) {
       console.log(`DXF 엔티티 발견: ${dxf.entities.length}개`);
@@ -331,6 +332,9 @@ const parseDxfFile = async (dxfFilePath) => {
       // 각 엔티티 처리
       dxf.entities.forEach(entity => {
         try {
+          // 통계 업데이트
+          entityStats[entity.type] = (entityStats[entity.type] || 0) + 1;
+          
           switch (entity.type) {
             case 'LINE':
               entities.push({
@@ -399,6 +403,13 @@ const parseDxfFile = async (dxfFilePath) => {
           // 엔티티 변환 오류는 조용히 건너뛰기
         }
       });
+      
+      // 엔티티 타입별 통계 출력
+      console.log('DXF 엔티티 타입별 통계:');
+      Object.entries(entityStats).forEach(([type, count]) => {
+        console.log(`  ${type}: ${count}개`);
+      });
+      console.log(`변환된 엔티티: ${entities.length}개`);
     }
     
     // 블록 참조 처리 (INSERT) - 공간명 표시용
@@ -644,72 +655,25 @@ const generateSvg = async (entities, filePath) => {
     }
     
     // 뷰포트 계산 - 개선된 방법 사용
-    let minX, minY, maxX, maxY;
-    
-    // 먼저 타이트한 바운딩 박스 계산 시도
     const tightBounds = calculateTightBounds(entities);
     
-    if (tightBounds) {
-      minX = tightBounds.minX;
-      minY = tightBounds.minY;
-      maxX = tightBounds.maxX;
-      maxY = tightBounds.maxY;
-    } else {
-      // 폴백: 기존 방법 사용
-      minX = Infinity; minY = Infinity;
-      maxX = -Infinity; maxY = -Infinity;
-      
-      // 모든 엔티티의 범위를 계산
-      entities.forEach(entity => {
-        try {
-          if (entity.type === 'LINE') {
-            if (entity.start && entity.end) {
-              minX = Math.min(minX, entity.start.x || 0, entity.end.x || 0);
-              minY = Math.min(minY, entity.start.y || 0, entity.end.y || 0);
-              maxX = Math.max(maxX, entity.start.x || 0, entity.end.x || 0);
-              maxY = Math.max(maxY, entity.start.y || 0, entity.end.y || 0);
-            }
-          } else if ((entity.type === 'POLYLINE' || entity.type === 'LWPOLYLINE') && entity.vertices) {
-            entity.vertices.forEach(v => {
-              if (v) {
-                minX = Math.min(minX, v.x || 0);
-                minY = Math.min(minY, v.y || 0);
-                maxX = Math.max(maxX, v.x || 0);
-                maxY = Math.max(maxY, v.y || 0);
-              }
-            });
-          } else if (entity.type === 'CIRCLE' && entity.center) {
-            const r = entity.radius || 0;
-            minX = Math.min(minX, (entity.center.x || 0) - r);
-            minY = Math.min(minY, (entity.center.y || 0) - r);
-            maxX = Math.max(maxX, (entity.center.x || 0) + r);
-            maxY = Math.max(maxY, (entity.center.y || 0) + r);
-          } else if (entity.type === 'ARC' && entity.center) {
-            const r = entity.radius || 0;
-            minX = Math.min(minX, (entity.center.x || 0) - r);
-            minY = Math.min(minY, (entity.center.y || 0) - r);
-            maxX = Math.max(maxX, (entity.center.x || 0) + r);
-            maxY = Math.max(maxY, (entity.center.y || 0) + r);
-          } else if ((entity.type === 'TEXT' || entity.type === 'MTEXT') && entity.position) {
-            minX = Math.min(minX, entity.position.x || 0);
-            minY = Math.min(minY, entity.position.y || 0);
-            maxX = Math.max(maxX, (entity.position.x || 0) + (entity.width || 50));
-            maxY = Math.max(maxY, (entity.position.y || 0) + (entity.height || 20));
-          }
-        } catch (err) {
-          // 오류 무시하고 계속
-        }
-      });
-    }
-    
-    // 범위가 유효하지 않은 경우 오류 발생
-    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY) || 
-        maxX - minX <= 0 || maxY - minY <= 0) {
+    if (!tightBounds) {
       throw new Error('유효한 도면 범위를 계산할 수 없습니다');
     }
     
+    console.log(`tightBounds 계산 결과:`, tightBounds);
+    
+    let minX = tightBounds.minX;
+    let minY = tightBounds.minY;
+    let maxX = tightBounds.maxX;
+    let maxY = tightBounds.maxY;
+    
+    console.log(`padding 적용 전: minX=${minX.toFixed(2)}, minY=${minY.toFixed(2)}, maxX=${maxX.toFixed(2)}, maxY=${maxY.toFixed(2)}`);
+    
     // 여백 추가 (더 크게)
     const padding = Math.max((maxX - minX) * 0.1, (maxY - minY) * 0.1, 50);
+    console.log(`계산된 padding: ${padding.toFixed(2)}`);
+    
     minX -= padding;
     minY -= padding;
     maxX += padding;
@@ -718,6 +682,8 @@ const generateSvg = async (entities, filePath) => {
     const width = maxX - minX;
     const height = maxY - minY;
     
+    console.log(`padding 적용 후: minX=${minX.toFixed(2)}, minY=${minY.toFixed(2)}, maxX=${maxX.toFixed(2)}, maxY=${maxY.toFixed(2)}`);
+    console.log(`최종 viewBox: "${minX} ${-maxY} ${width} ${height}"`);
     console.log(`도면 범위: (${minX}, ${minY}) - (${maxX}, ${maxY}), 크기: ${width} x ${height}`);
     
     // SVG 생성 (Y축 반전 적용)
@@ -933,20 +899,35 @@ const calculateTightBounds = (entities) => {
     return null;
   }
 
-  // 좌표별 정렬하여 아웃라이어 제거 (상위/하위 2% 제거로 줄임)
+  // 아웃라이어 제거를 위한 좌표별 정렬
   const xCoords = validPoints.map(p => p.x).sort((a, b) => a - b);
   const yCoords = validPoints.map(p => p.y).sort((a, b) => a - b);
   
-  const removePercent = 0.02; // 2%로 줄임 (원래 5%)
-  const xStart = Math.floor(xCoords.length * removePercent);
-  const xEnd = Math.ceil(xCoords.length * (1 - removePercent));
-  const yStart = Math.floor(yCoords.length * removePercent);
-  const yEnd = Math.ceil(yCoords.length * (1 - removePercent));
+  // 상위/하위 2%를 아웃라이어로 간주하여 제거
+  const outlierPercent = 0.02;
+  const xStart = Math.floor(xCoords.length * outlierPercent);
+  const xEnd = Math.ceil(xCoords.length * (1 - outlierPercent));
+  const yStart = Math.floor(yCoords.length * outlierPercent);
+  const yEnd = Math.ceil(yCoords.length * (1 - outlierPercent));
   
   const minX = xCoords[xStart];
   const maxX = xCoords[xEnd - 1];
   const minY = yCoords[yStart];  
   const maxY = yCoords[yEnd - 1];
+
+  // 결과가 유효한지 확인
+  if (maxX - minX <= 0 || maxY - minY <= 0) {
+    console.warn('아웃라이어 제거 후 유효하지 않은 범위, 전체 범위 사용');
+    return {
+      minX: Math.min(...xCoords),
+      maxX: Math.max(...xCoords),
+      minY: Math.min(...yCoords),
+      maxY: Math.max(...yCoords)
+    };
+  }
+
+  console.log(`아웃라이어 제거: ${validPoints.length}개 포인트 중 ${xCoords.length - (xEnd - xStart)}개 X 아웃라이어, ${yCoords.length - (yEnd - yStart)}개 Y 아웃라이어 제거`);
+  console.log(`정제된 범위: X(${minX.toFixed(2)} ~ ${maxX.toFixed(2)}), Y(${minY.toFixed(2)} ~ ${maxY.toFixed(2)})`);
 
   return { minX, minY, maxX, maxY };
 };
@@ -986,5 +967,7 @@ const isRoomName = (text) => {
 };
 
 module.exports = {
-  processDwgFile
+  processDwgFile,
+  parseDxfFile,
+  generateSvg
 }; 
