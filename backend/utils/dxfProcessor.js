@@ -1,1081 +1,846 @@
 /**
- * DWG 파일 처리 모듈
- * ODAFileConverter를 활용한 DWG -> DXF 변환 및 도면 추출
+ * DXF 라이브러리만 사용하는 순수한 처리기
+ * DWG → DXF 변환 + dxf 라이브러리 활용 + 90도 ARC 문 감지 + 벽 색상 변경
  */
+
 const fs = require('fs');
 const path = require('path');
-const { execSync, exec } = require('child_process');
-const { promisify } = require('util');
-const execPromise = promisify(exec);
-const DxfParser = require('dxf-parser');
-const { parseString } = require('@dxfjs/parser');
-const os = require('os');
+const { Helper } = require('dxf');
+const { spawn } = require('child_process');
 
 /**
- * DWG 파일 처리 메인 함수
+ * DWG/DXF 파일 처리 메인 함수
  */
-const processDwgFile = async (jobId, filename, filePath, progressCallback) => {
+const processCompleteDxfFile = async (jobId, filename, filePath, progressCallback) => {
   try {
-    progressCallback(0, 'DWG 파일 처리 시작...');
+    progressCallback(10, '파일 분석 중...');
     
     if (!fs.existsSync(filePath)) {
-      throw new Error('DWG 파일을 찾을 수 없습니다');
+      throw new Error('파일을 찾을 수 없습니다');
     }
     
-    const fileSize = fs.statSync(filePath).size;
-    console.log(`DWG 파일 크기: ${fileSize} bytes`);
-    console.log(`파일명: ${filename}, 파일 경로: ${filePath}`);
+    // 파일 확장자 확인
+    const fileExt = path.extname(filename).toLowerCase();
+    let dxfContent;
     
-    // 파일 헤더 확인
-    progressCallback(10, 'DWG 파일 검증 중...');
-    const dwgHeader = await readDwgHeader(filePath);
-    
-    // AC 시그니처 확인 (DWG 파일 검증)
-    if (!dwgHeader.signature.startsWith('AC')) {
-      throw new Error(`유효하지 않은 DWG 파일 시그니처: ${dwgHeader.signature}`);
+    if (fileExt === '.dwg') {
+      // DWG 파일인 경우 DXF로 변환
+      progressCallback(30, 'DWG 파일을 DXF로 변환 중...');
+      dxfContent = await convertDwgToDxf(filePath);
+    } else if (fileExt === '.dxf') {
+      // DXF 파일인 경우 바로 읽기
+      progressCallback(30, 'DXF 파일 읽는 중...');
+      dxfContent = fs.readFileSync(filePath, 'utf8');
+    } else {
+      throw new Error('지원하지 않는 파일 형식입니다. DWG 또는 DXF 파일만 업로드해주세요.');
     }
     
-    console.log(`DWG 시그니처: ${dwgHeader.signature}, 버전: ${dwgHeader.version}`);
-    progressCallback(20, `DWG 파일 검증됨: ${dwgHeader.signature} (${dwgHeader.version})`);
+    console.log(`파일 크기: ${(dxfContent.length / 1024).toFixed(1)} KB`);
     
-    // SVG 파일 경로 설정
+    progressCallback(50, 'DXF 파싱 및 SVG 변환 중...');
+    
+    // dxf 라이브러리의 Helper 클래스 사용
+    const helper = new Helper(dxfContent);
+    
+    console.log('DXF 파싱 성공');
+    console.log('파싱된 엔티티:', helper.parsed?.entities?.length || 0);
+    console.log('정규화된 엔티티:', helper.denormalised?.length || 0);
+    
+    // ARC 엔티티 분석
+    analyzeArcEntities(helper);
+    
+    // 텍스트 엔티티 분석
+    analyzeTextEntities(helper);
+    
+    // SVG 생성 (라이브러리 기본 기능 사용)
+    let svgContent = helper.toSVG();
+    
+    progressCallback(60, '벽 색상 변경 및 viewBox 최적화 중...');
+    
+    // 벽 색상 변경 + viewBox 최적화
+    svgContent = changeWallColors(svgContent);
+    
+    progressCallback(65, '방 이름 텍스트 추가 중...');
+    
+    // 방 이름 텍스트 추가 (스마트 배치)
+    svgContent = addRoomLabels(svgContent, helper);
+    
+    progressCallback(70, '90도 문 호 감지 및 표시 중...');
+    
+    // 90도 ARC 문 감지 및 표시
+    svgContent = add90DegreeDoorMarkers(svgContent, helper);
+    
+    progressCallback(80, 'SVG 파일 저장 중...');
+    
     const svgFileName = `${jobId}.svg`;
     const svgFilePath = path.join(__dirname, '..', 'results', svgFileName);
     
-    // 임시 DXF 경로 설정
+    const resultsDir = path.dirname(svgFilePath);
+    if (!fs.existsSync(resultsDir)) {
+      fs.mkdirSync(resultsDir, { recursive: true });
+    }
+    
+    fs.writeFileSync(svgFilePath, svgContent, 'utf8');
+    console.log(`SVG 파일 저장: ${svgFilePath}`);
+    
+    progressCallback(100, 'DXF 처리 완료');
+    
+    return {
+      jobId,
+      svgFile: svgFilePath,
+      entityCount: helper.denormalised?.length || 0,
+      success: true,
+      processingMethod: 'dxf-library-with-dwg-conversion'
+    };
+    
+  } catch (error) {
+    console.error(`파일 처리 오류: ${error.message}`);
+    throw error;
+  }
+};
+
+/**
+ * DWG를 DXF로 변환 (ODA File Converter 사용)
+ */
+const convertDwgToDxf = async (dwgFilePath) => {
+  try {
+    console.log('ODA File Converter를 사용하여 DWG → DXF 변환 시작...');
+    
+    // ODA File Converter 실행 파일 경로 (일반적인 설치 경로들)
+    const possibleOdaPaths = [
+      'C:\\Program Files\\ODA\\ODAFileConverter 26.4.0\\ODAFileConverter.exe', // 사용자 시스템
+      'C:\\Program Files\\ODA\\ODAFileConverter\\ODAFileConverter.exe',
+      'C:\\Program Files (x86)\\ODA\\ODAFileConverter\\ODAFileConverter.exe',
+      'C:\\Program Files (x86)\\ODA\\ODAFileConverter 26.4.0\\ODAFileConverter.exe',
+      'ODAFileConverter.exe' // PATH에 등록된 경우
+    ];
+    
+    console.log('🔍 ODA File Converter 경로 탐색 중...');
+    let odaPath = null;
+    for (const pathToCheck of possibleOdaPaths) {
+      console.log(`   검사 중: ${pathToCheck}`);
+      if (fs.existsSync(pathToCheck)) {
+        odaPath = pathToCheck;
+        console.log(`   ✅ 발견: ${pathToCheck}`);
+        break;
+      } else {
+        console.log(`   ❌ 없음: ${pathToCheck}`);
+      }
+    }
+    
+    if (!odaPath) {
+      throw new Error('ODA File Converter를 찾을 수 없습니다. 설치되어 있는지 확인해주세요.');
+    }
+    
+    // 임시 출력 디렉토리 생성
     const tempDir = path.join(__dirname, '..', 'temp');
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
     }
-    const dxfFilePath = path.join(tempDir, `${jobId}.dxf`);
     
-    // DWG -> DXF 변환 (ODAFileConverter 사용)
-    progressCallback(30, 'DWG 파일을 DXF로 변환 중...');
-    const dxfPath = await convertDwgToDxf(filePath, dxfFilePath);
-    
-    if (!dxfPath || !fs.existsSync(dxfPath)) {
-      throw new Error('DWG에서 DXF로 변환에 실패했습니다');
-    }
-    
-    progressCallback(50, 'DXF 파일 분석 중...');
-    
-    // DXF 파일 파싱하여 엔티티 추출
-    const entities = await parseDxfFile(dxfPath);
-    
-    if (!entities || entities.length === 0) {
-      throw new Error('DXF 파일에서 도면 엔티티를 추출할 수 없습니다');
-    }
-    
-    console.log(`추출된 엔티티: ${entities.length}개`);
-    
-    // 엔티티 통계 (서비스용)
-    const entityTypes = {};
-    const layerStats = {};
-    
-    entities.forEach(entity => {
-      entityTypes[entity.type] = (entityTypes[entity.type] || 0) + 1;
-      layerStats[entity.layer] = (layerStats[entity.layer] || 0) + 1;
-    });
-    
-    // 주요 레이어 식별 (엔티티가 많은 상위 5개 레이어)
-    const majorLayers = Object.entries(layerStats)
-      .sort(([,a], [,b]) => b - a)
-      .slice(0, 5)
-      .map(([layer, count]) => ({ layer, count }));
-    
-    console.log(`도면 분석 완료: ${entities.length}개 엔티티, ${Object.keys(layerStats).length}개 레이어`);
-    
-    progressCallback(70, `도면 분석: ${entities.length}개 요소`);
-    
-    // SVG 생성
-    await generateSvg(entities, svgFilePath);
-    progressCallback(90, 'SVG 도면 생성 완료');
-    
-    // 문 감지 비활성화 (사용자에게는 순수한 도면만 표시)
-    const doors = [];
-    progressCallback(100, 'DWG 파일 분석 완료');
-    
-    // 임시 파일 정리
-    try {
-      if (fs.existsSync(dxfPath)) {
-        fs.unlinkSync(dxfPath);
-      }
-    } catch (cleanError) {
-      console.error('임시 파일 정리 오류:', cleanError);
-    }
-    
-    // 결과 반환
-    return {
-      jobId,
-      doors,
-      svgFile: svgFilePath,
-      entityCount: entities.length,
-      success: true
-    };
-    
-  } catch (error) {
-    console.error(`DWG 처리 오류: ${error.message}`);
-    throw error;
-  }
-};
-
-/**
- * DWG 파일 헤더 읽기
- */
-const readDwgHeader = async (filePath) => {
-  return new Promise((resolve, reject) => {
-    try {
-      // 파일의 첫 1024바이트를 읽어 헤더 파싱
-      const headerBuffer = Buffer.alloc(1024);
-      const fd = fs.openSync(filePath, 'r');
-      fs.readSync(fd, headerBuffer, 0, 1024, 0);
-      fs.closeSync(fd);
-      
-      // 시그니처 추출 (첫 6바이트)
-      const signature = headerBuffer.toString('ascii', 0, 6);
-      
-      // 버전 정보 추출 시도
-      let version = 'Unknown';
-      if (signature === 'AC1027') version = 'AutoCAD 2013/2014/2015/2016/2017/2018';
-      else if (signature === 'AC1024') version = 'AutoCAD 2010/2011/2012';
-      else if (signature === 'AC1021') version = 'AutoCAD 2007/2008/2009';
-      else if (signature === 'AC1018') version = 'AutoCAD 2004/2005/2006';
-      else if (signature === 'AC1015') version = 'AutoCAD 2000/2000i/2002';
-      else if (signature === 'AC1014') version = 'AutoCAD 14/14.01';
-      else if (signature === 'AC1012') version = 'AutoCAD 13/13c3/13c4';
-      else if (signature.startsWith('AC')) version = 'AutoCAD (기타 버전)';
-      
-      // 파일 크기
-      const fileSize = fs.statSync(filePath).size;
-      
-      // 헤더 정보 객체 반환
-      resolve({
-        signature,
-        version,
-        fileSize
-      });
-    } catch (error) {
-      console.error('DWG 헤더 분석 오류:', error.message);
-      reject(error);
-    }
-  });
-};
-
-/**
- * ODA File Converter를 사용하여 DWG에서 DXF로 변환
- */
-const convertDwgToDxf = async (dwgFilePath, dxfFilePath) => {
-  try {
-    console.log(`DWG -> DXF 변환 시도: ${dwgFilePath} -> ${dxfFilePath}`);
-    
-    // 출력 디렉토리 확인
-    const outputDir = path.dirname(dxfFilePath);
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
-    
-    // ODAFileConverter 경로 찾기
-    const odaConverterPath = findOdaConverter();
-    
-    if (!odaConverterPath) {
-      throw new Error('ODAFileConverter를 찾을 수 없습니다. 설치 후 다시 시도하세요.');
-    }
-    
-    console.log(`ODAFileConverter 발견: ${odaConverterPath}`);
-    
-    // 입출력 경로
     const inputDir = path.dirname(dwgFilePath);
-    const outputDirPath = path.dirname(dxfFilePath);
+    const outputDir = tempDir;
+    const dwgFileName = path.basename(dwgFilePath, path.extname(dwgFilePath));
+    const dxfFilePath = path.join(outputDir, `${dwgFileName}.dxf`);
     
-    // ODAFileConverter 명령 구성 - 올바른 형식 사용
-    // 형식: ODAFileConverter "input_folder" "output_folder" "output_version" "output_file_type" "recurse" "audit" ["input_filter"]
-    const command = `"${odaConverterPath}" "${inputDir}" "${outputDirPath}" "ACAD2018" "DXF" "0" "1"`;
-    
-    console.log(`실행 명령: ${command}`);
-    
-    // 타임아웃 설정 (60초)
-    const timeoutMs = 60000;
-    
-    // ODAFileConverter 실행
-    const { stdout, stderr } = await execPromise(command, { timeout: timeoutMs });
-    
-    console.log('ODAFileConverter 실행 완료');
-    
-    if (stderr && stderr.length > 0) {
-      console.error('ODAFileConverter stderr:', stderr);
-      // stderr가 있어도 성공적으로 변환될 수 있으므로 바로 오류 처리하지 않음
-    }
-    
-    if (stdout && stdout.length > 0) {
-      console.log('ODAFileConverter stdout:', stdout);
-    }
-    
-    // 잠시 대기 (파일 시스템 동기화)
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // 출력 파일 경로 재계산 (ODAFileConverter는 원본 파일명을 유지하되 확장자만 변경)
-    const originalBaseName = path.basename(dwgFilePath, '.dwg');
-    const expectedDxfPath = path.join(outputDirPath, `${originalBaseName}.dxf`);
-    
-    // 원래 요청된 경로와 실제 생성된 경로가 다르면 이동
-    if (expectedDxfPath !== dxfFilePath && fs.existsSync(expectedDxfPath)) {
-      console.log(`파일 이동: ${expectedDxfPath} -> ${dxfFilePath}`);
-      fs.renameSync(expectedDxfPath, dxfFilePath);
-    }
-    
-    // 결과 파일 확인
-    if (fs.existsSync(dxfFilePath)) {
-      console.log('DXF 파일 생성 성공:', dxfFilePath);
-      return dxfFilePath;
-    } else {
-      // 대안 경로들 확인
-      const alternativePaths = [
-        expectedDxfPath,
-        path.join(outputDirPath, `${originalBaseName}.DXF`),
-        path.join(outputDirPath, `${path.basename(dwgFilePath, '.dwg')}.dxf`)
-      ];
-      
-      for (const altPath of alternativePaths) {
-        if (fs.existsSync(altPath)) {
-          console.log(`대안 경로에서 DXF 파일 발견: ${altPath}`);
-          if (altPath !== dxfFilePath) {
-            fs.renameSync(altPath, dxfFilePath);
-          }
-          return dxfFilePath;
-        }
-      }
-      
-      throw new Error('DXF 파일이 생성되지 않았습니다');
-    }
-  } catch (error) {
-    console.error(`DWG -> DXF 변환 오류: ${error.message}`);
-    
-    // 타임아웃 오류인 경우 더 자세한 메시지 제공
-    if (error.message.includes('timeout')) {
-      throw new Error('DWG 파일 변환이 시간 초과되었습니다. 파일이 너무 크거나 복잡할 수 있습니다.');
-    }
-    
-    throw error;
-  }
-};
-
-/**
- * ODAFileConverter 실행 파일 경로 찾기
- */
-const findOdaConverter = () => {
-  try {
-    // Windows에서 일반적인 설치 경로
-    const commonPaths = [
-      'C:\\Program Files\\ODA\\ODAFileConverter 26.4.0\\ODAFileConverter.exe',
-      'C:\\Program Files (x86)\\ODA\\ODAFileConverter\\ODAFileConverter.exe'
+    // ODA File Converter 실행
+    const args = [
+      inputDir,        // 입력 디렉토리
+      outputDir,       // 출력 디렉토리  
+      'ACAD2018',      // 출력 버전
+      'DXF',           // 출력 형식
+      '1',             // 반복 모드
+      '1',             // 감사 정보 포함
+      `${dwgFileName}.dwg` // 입력 파일명
     ];
     
-    // 환경 변수에 설정된 경로 확인
-    if (process.env.ODA_CONVERTER_PATH) {
-      const envPath = process.env.ODA_CONVERTER_PATH;
-      if (fs.existsSync(envPath)) {
-        return envPath;
+    console.log(`ODA 명령어: ${odaPath} ${args.join(' ')}`);
+    
+    return new Promise((resolve, reject) => {
+      const odaProcess = spawn(odaPath, args, {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+      
+      let stdout = '';
+      let stderr = '';
+      
+      odaProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+      
+      odaProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+      
+      odaProcess.on('close', (code) => {
+        if (code === 0 && fs.existsSync(dxfFilePath)) {
+          console.log('DWG → DXF 변환 완료');
+          
+          try {
+            const dxfContent = fs.readFileSync(dxfFilePath, 'utf8');
+            
+            // 임시 파일 정리
+            try {
+              fs.unlinkSync(dxfFilePath);
+            } catch (e) {
+              console.warn('임시 DXF 파일 삭제 실패:', e.message);
+            }
+            
+            resolve(dxfContent);
+          } catch (readError) {
+            reject(new Error(`변환된 DXF 파일 읽기 실패: ${readError.message}`));
+          }
+        } else {
+          console.error('ODA 변환 실패:', stderr);
+          reject(new Error(`ODA File Converter 실행 실패 (코드: ${code})\n${stderr}`));
+        }
+      });
+      
+      odaProcess.on('error', (error) => {
+        reject(new Error(`ODA File Converter 실행 오류: ${error.message}`));
+      });
+      
+      // 타임아웃 설정 (30초)
+      setTimeout(() => {
+        odaProcess.kill();
+        reject(new Error('DWG 변환 시간 초과 (30초)'));
+      }, 30000);
+    });
+    
+  } catch (error) {
+    console.error('DWG 변환 오류:', error.message);
+    
+    // ODA 실패 시 libredwg-web으로 fallback
+    console.log('ODA 변환 실패, libredwg-web으로 재시도...');
+    try {
+      const { libredwgjs } = require('@mlightcad/libredwg-web');
+      const dwgBuffer = fs.readFileSync(dwgFilePath);
+      const result = await libredwgjs(dwgBuffer, 'dxf');
+      
+      if (result && result.content) {
+        console.log('libredwg-web 변환 성공');
+        return result.content;
+      }
+    } catch (fallbackError) {
+      console.error('Fallback 변환도 실패:', fallbackError.message);
+    }
+    
+    throw new Error(`DWG 파일 변환에 실패했습니다. DXF 파일로 변환하여 업로드해주세요. (ODA 오류: ${error.message})`);
+  }
+};
+
+/**
+ * 벽 색상 변경 (노란색 + 회색 → 진한 녹색) + viewBox 최적화 + 방 이름 텍스트 추가
+ */
+const changeWallColors = (svgContent) => {
+  try {
+    console.log('벽 색상을 진한 녹색으로 변경하고 viewBox 최적화 중...');
+    
+    // 1. 다양한 벽 색상들을 진한 녹색으로 교체
+    svgContent = svgContent
+      // 노란색 계열
+      .replace(/stroke="yellow"/g, 'stroke="#006400"')
+      .replace(/stroke="Yellow"/g, 'stroke="#006400"')
+      .replace(/stroke="#FFFF00"/g, 'stroke="#006400"')
+      .replace(/stroke="#ffff00"/g, 'stroke="#006400"')
+      .replace(/stroke="rgb\(255,255,0\)"/g, 'stroke="#006400"')
+      // 회색 계열 (주요 벽 색상)
+      .replace(/stroke="rgb\(65,\s*65,\s*65\)"/g, 'stroke="#006400"')
+      .replace(/stroke="rgb\(128,\s*128,\s*128\)"/g, 'stroke="#006400"')
+      .replace(/stroke="rgb\(169,\s*169,\s*169\)"/g, 'stroke="#006400"')
+      .replace(/stroke="rgb\(211,\s*211,\s*211\)"/g, 'stroke="#006400"')
+      .replace(/stroke="#808080"/g, 'stroke="#006400"')
+      .replace(/stroke="#A9A9A9"/g, 'stroke="#006400"')
+      .replace(/stroke="#D3D3D3"/g, 'stroke="#006400"')
+      .replace(/stroke="#696969"/g, 'stroke="#006400"')
+      // Fill 색상도 변경
+      .replace(/fill="yellow"/g, 'fill="#006400"')
+      .replace(/fill="rgb\(65,\s*65,\s*65\)"/g, 'fill="#006400"')
+      .replace(/fill="#808080"/g, 'fill="#006400"');
+    
+    // 2. viewBox 최적화 (좌표 범위 자동 조정)
+    svgContent = optimizeViewBox(svgContent);
+    
+    return svgContent;
+    
+  } catch (error) {
+    console.warn('벽 색상 변경 실패:', error.message);
+    return svgContent;
+  }
+};
+
+/**
+ * SVG viewBox 최적화 (엔티티가 화면 전체에 보이도록 조정)
+ */
+const optimizeViewBox = (svgContent) => {
+  try {
+    console.log('SVG viewBox 최적화 중...');
+    
+    // 현재 viewBox 추출
+    const viewBoxMatch = svgContent.match(/viewBox="([^"]+)"/);
+    if (!viewBoxMatch) {
+      console.warn('viewBox를 찾을 수 없음');
+      return svgContent;
+    }
+    
+    const currentViewBox = viewBoxMatch[1];
+    const [x, y, width, height] = currentViewBox.split(' ').map(Number);
+    
+    console.log(`현재 viewBox: x=${x.toFixed(0)}, y=${y.toFixed(0)}, w=${width.toFixed(0)}, h=${height.toFixed(0)}`);
+    
+    // 모든 path 요소에서 좌표 추출 (더 정확한 방법)
+    const pathRegex = /<path d="([^"]+)"/g;
+    const coordRegex = /[ML]\s*([\d.-]+)[\s,]+([\d.-]+)/g;
+    
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let coordCount = 0;
+    
+    let pathMatch;
+    while ((pathMatch = pathRegex.exec(svgContent)) !== null) {
+      const pathData = pathMatch[1];
+      let coordMatch;
+      
+      while ((coordMatch = coordRegex.exec(pathData)) !== null) {
+        const px = parseFloat(coordMatch[1]);
+        const py = parseFloat(coordMatch[2]);
+        
+        if (!isNaN(px) && !isNaN(py) && isFinite(px) && isFinite(py)) {
+          minX = Math.min(minX, px);
+          minY = Math.min(minY, py);
+          maxX = Math.max(maxX, px);
+          maxY = Math.max(maxY, py);
+          coordCount++;
+        }
       }
     }
     
-    // 일반적인 설치 경로 확인
-    for (const path of commonPaths) {
-      if (fs.existsSync(path)) {
-        return path;
-      }
+    console.log(`추출된 좌표 개수: ${coordCount}`);
+    console.log(`좌표 범위: X(${minX.toFixed(0)} ~ ${maxX.toFixed(0)}), Y(${minY.toFixed(0)} ~ ${maxY.toFixed(0)})`);
+    
+    if (minX === Infinity || coordCount < 10) {
+      console.warn('충분한 유효 좌표를 찾을 수 없음, 원본 viewBox 유지');
+      return svgContent;
     }
     
-    console.error('ODAFileConverter를 찾을 수 없습니다');
-    return null;
+    // 현재 viewBox와 추출된 좌표 범위 비교
+    const extractedWidth = maxX - minX;
+    const extractedHeight = maxY - minY;
+    const currentArea = width * height;
+    const extractedArea = extractedWidth * extractedHeight;
+    
+    // 추출된 범위가 현재 viewBox보다 10배 이상 클 경우 최적화 건너뛰기
+    if (extractedArea > currentArea * 10) {
+      console.warn('추출된 좌표 범위가 너무 큼, 원본 viewBox 유지');
+      console.log(`현재 면적: ${currentArea.toFixed(0)}, 추출된 면적: ${extractedArea.toFixed(0)}`);
+      return svgContent;
+    }
+    
+    // 5% 여백 추가 (더 보수적으로)
+    const margin = Math.max(extractedWidth * 0.05, extractedHeight * 0.05, 50);
+    const newX = minX - margin;
+    const newY = minY - margin;
+    const newWidth = extractedWidth + (margin * 2);
+    const newHeight = extractedHeight + (margin * 2);
+    
+    const newViewBox = `${newX.toFixed(2)} ${newY.toFixed(2)} ${newWidth.toFixed(2)} ${newHeight.toFixed(2)}`;
+    
+    console.log(`최적화된 viewBox: ${newViewBox}`);
+    console.log(`크기 변화: ${((newWidth * newHeight) / (width * height) * 100).toFixed(1)}%`);
+    
+    // viewBox 교체
+    svgContent = svgContent.replace(/viewBox="[^"]+"/, `viewBox="${newViewBox}"`);
+    
+    return svgContent;
+    
   } catch (error) {
-    console.error('ODAFileConverter 검색 오류:', error.message);
-    return null;
+    console.warn('viewBox 최적화 실패:', error.message);
+    return svgContent;
   }
 };
 
 /**
- * DXF 파일 파싱
+ * 90도 ARC 문 감지 및 빨간색 사각형 마커 추가
  */
-const parseDxfFile = async (dxfFilePath) => {
+const add90DegreeDoorMarkers = (svgContent, helper) => {
   try {
-    console.log(`DXF 파일 파싱 시작: ${dxfFilePath}`);
+    const doors = detect90DegreeDoors(helper);
+    console.log(`\n🚪 ${doors.length}개의 90도 문 호 감지됨`);
     
-    if (!fs.existsSync(dxfFilePath)) {
-      throw new Error(`DXF 파일을 찾을 수 없습니다: ${dxfFilePath}`);
+    if (doors.length === 0) {
+      return svgContent;
     }
     
-    // 파일 크기 확인
-    const fileStats = fs.statSync(dxfFilePath);
-    if (fileStats.size === 0) {
-      throw new Error('DXF 파일이 비어있습니다');
+    // SVG 닫는 태그 찾기
+    const svgEndIndex = svgContent.lastIndexOf('</svg>');
+    if (svgEndIndex === -1) {
+      return svgContent;
     }
     
-    // DXF 파일 내용 읽기
-    const dxfContent = fs.readFileSync(dxfFilePath, 'utf8');
-    
-    // DXF 파일 시작 확인
-    if (!dxfContent.includes('SECTION') || !dxfContent.includes('ENTITIES')) {
-      throw new Error('유효하지 않은 DXF 파일 형식입니다');
-    }
-    
-    // DXF 파서 생성 및 파싱
-    const parser = new DxfParser();
-    const dxf = parser.parseSync(dxfContent);
-    
-    // 엔티티 추출
-    const entities = [];
-    const entityStats = {}; // 엔티티 타입별 통계
-    
-    if (dxf.entities && Array.isArray(dxf.entities)) {
-      console.log(`DXF 엔티티 발견: ${dxf.entities.length}개`);
+    // 문 마커 생성
+    let doorMarkersHtml = '\n  <!-- 90도 문 호 마커 -->\n';
+    doors.forEach((door, index) => {
+      const markerSize = door.radius * 0.4; // 반지름의 40% 크기
+      const centerX = door.center.x;
+      const centerY = door.center.y;
       
-      // 각 엔티티 처리
-      dxf.entities.forEach(entity => {
-        try {
-          // 통계 업데이트
-          entityStats[entity.type] = (entityStats[entity.type] || 0) + 1;
-          
-          switch (entity.type) {
-            case 'LINE':
-              entities.push({
-                type: 'LINE',
-                layer: entity.layer || 'default',
-                color: entity.color || 7,
-                start: { 
-                  x: entity.vertices?.[0]?.x || entity.startPoint?.x || 0, 
-                  y: entity.vertices?.[0]?.y || entity.startPoint?.y || 0 
-                },
-                end: { 
-                  x: entity.vertices?.[1]?.x || entity.endPoint?.x || 0, 
-                  y: entity.vertices?.[1]?.y || entity.endPoint?.y || 0 
-                }
-              });
-              break;
-              
-            case 'LWPOLYLINE':
-            case 'POLYLINE':
-              if (entity.vertices && entity.vertices.length > 0) {
-                entities.push({
-                  type: 'POLYLINE',
-                  layer: entity.layer || 'default',
-                  color: entity.color || 7,
-                  closed: entity.shape === true || entity.closed === true,
-                  vertices: entity.vertices.map(v => ({ x: v.x || 0, y: v.y || 0 }))
-                });
-              }
-              break;
-              
-            case 'CIRCLE':
-              entities.push({
-                type: 'CIRCLE',
-                layer: entity.layer || 'default',
-                color: entity.color || 7,
-                center: { x: entity.center?.x || 0, y: entity.center?.y || 0 },
-                radius: entity.radius || 0
-              });
-              break;
-              
-            case 'ARC':
-              entities.push({
-                type: 'ARC',
-                layer: entity.layer || 'default',
-                color: entity.color || 7,
-                center: { x: entity.center?.x || 0, y: entity.center?.y || 0 },
-                radius: entity.radius || 0,
-                startAngle: entity.startAngle || 0,
-                endAngle: entity.endAngle || 0
-              });
-              break;
-              
-            case 'TEXT':
-            case 'MTEXT':
-              entities.push({
-                type: 'TEXT',
-                layer: entity.layer || 'default',
-                color: entity.color || 7,
-                text: entity.text || '',
-                position: { x: entity.position?.x || 0, y: entity.position?.y || 0 },
-                height: entity.height || 12
-              });
-              break;
-
-            case 'ELLIPSE':
-              // 타원을 여러 개의 ARC로 근사화
-              if (entity.center && entity.majorAxis && entity.minorAxis) {
-                const cx = entity.center.x || 0;
-                const cy = entity.center.y || 0;
-                const majorRadius = Math.sqrt(
-                  Math.pow(entity.majorAxis.x || 0, 2) + Math.pow(entity.majorAxis.y || 0, 2)
-                );
-                const ratio = entity.ratio || 1; // 장축 대 단축 비율
-                const minorRadius = majorRadius * ratio;
-                
-                // 타원을 8개의 ARC로 분할하여 근사화
-                const segments = 8;
-                for (let i = 0; i < segments; i++) {
-                  const startAngle = (i * 360) / segments;
-                  const endAngle = ((i + 1) * 360) / segments;
-                  
-                  entities.push({
-                    type: 'ARC',
-                    layer: entity.layer || 'default',
-                    color: entity.color || 7,
-                    center: { x: cx, y: cy },
-                    radius: (majorRadius + minorRadius) / 2, // 평균 반지름 사용
-                    startAngle: startAngle,
-                    endAngle: endAngle
-                  });
-                }
-              }
-              break;
-
-            case 'SPLINE':
-              // SPLINE을 여러 개의 LINE으로 근사화
-              if (entity.controlPoints && entity.controlPoints.length > 1) {
-                for (let i = 0; i < entity.controlPoints.length - 1; i++) {
-                  const start = entity.controlPoints[i];
-                  const end = entity.controlPoints[i + 1];
-                  
-                  if (start && end) {
-                    entities.push({
-                      type: 'LINE',
-                      layer: entity.layer || 'default',
-                      color: entity.color || 7,
-                      start: { x: start.x || 0, y: start.y || 0 },
-                      end: { x: end.x || 0, y: end.y || 0 }
-                    });
-                  }
-                }
-              } else if (entity.fitPoints && entity.fitPoints.length > 1) {
-                // fitPoints가 있는 경우 사용
-                for (let i = 0; i < entity.fitPoints.length - 1; i++) {
-                  const start = entity.fitPoints[i];
-                  const end = entity.fitPoints[i + 1];
-                  
-                  if (start && end) {
-                    entities.push({
-                      type: 'LINE',
-                      layer: entity.layer || 'default',
-                      color: entity.color || 7,
-                      start: { x: start.x || 0, y: start.y || 0 },
-                      end: { x: end.x || 0, y: end.y || 0 }
-                    });
-                  }
-                }
-              }
-              break;
-
-            case 'POINT':
-              // POINT를 작은 CIRCLE로 표현
-              if (entity.position) {
-                entities.push({
-                  type: 'CIRCLE',
-                  layer: entity.layer || 'default',
-                  color: entity.color || 7,
-                  center: { x: entity.position.x || 0, y: entity.position.y || 0 },
-                  radius: 0.5 // 매우 작은 원으로 표현
-                });
-              }
-              break;
-          }
-        } catch (entityError) {
-          // 엔티티 변환 오류는 조용히 건너뛰기
-        }
-      });
-      
-      // 엔티티 타입별 통계 출력
-      console.log('DXF 엔티티 타입별 통계:');
-      Object.entries(entityStats).forEach(([type, count]) => {
-        console.log(`  ${type}: ${count}개`);
-      });
-      console.log(`변환된 엔티티: ${entities.length}개`);
+      doorMarkersHtml += `  <rect class="door-marker-90" x="${centerX - markerSize/2}" y="${centerY - markerSize/2}" width="${markerSize}" height="${markerSize}" />\n`;
+    });
+    
+    // 스타일 추가 (빨간색으로 되돌림)
+    const styleInsert = `  <style>
+    .door-marker-90 { 
+      stroke: #ff0000; 
+      stroke-width: 4; 
+      fill: rgba(255, 0, 0, 0.4); 
+      opacity: 0.8;
+    }
+  </style>\n`;
+    
+    // 첫 번째 <g> 태그나 적절한 위치 찾기
+    const firstGroupIndex = svgContent.indexOf('<g');
+    if (firstGroupIndex !== -1) {
+      svgContent = svgContent.slice(0, firstGroupIndex) + styleInsert + svgContent.slice(firstGroupIndex);
     }
     
-    // 블록 참조 처리 (INSERT) - 공간명 표시용
-    if (dxf.blocks && dxf.entities) {
-      const blockInserts = dxf.entities.filter(e => e.type === 'INSERT');
-      
-      blockInserts.forEach(insert => {
-        try {
-          const blockName = insert.name;
-          const block = dxf.blocks[blockName];
-          
-          if (block && block.entities) {
-            // 블록 엔티티 변환 및 추가
-            block.entities.forEach(blockEntity => {
-              // INSERT 위치 기반 변환
-              const transformedEntity = transformBlockEntity(blockEntity, insert);
-              if (transformedEntity) {
-                entities.push(transformedEntity);
-              }
-            });
-          }
-          
-          // 블록 이름이 공간명인 경우 텍스트로 추가
-          if (insert.position && isRoomName(blockName)) {
-            entities.push({
-              type: 'TEXT',
-              layer: insert.layer || 'ROOM_LABELS',
-              color: 0,
-              text: blockName,
-              position: { x: insert.position.x || 0, y: insert.position.y || 0 },
-              height: 20
-            });
-          }
-        } catch (blockError) {
-          // 블록 처리 오류는 조용히 건너뛰기
-        }
-      });
-    }
+    // 문 마커를 SVG 끝 부분에 추가
+    svgContent = svgContent.slice(0, svgEndIndex) + doorMarkersHtml + svgContent.slice(svgEndIndex);
     
-    return entities;
+    return svgContent;
+    
   } catch (error) {
-    console.error(`DXF 파싱 오류: ${error.message}`);
-    throw error;
+    console.warn('90도 문 마커 추가 실패:', error.message);
+    return svgContent;
   }
 };
 
 /**
- * 블록 엔티티 변환
+ * 90도 ARC 문 감지
  */
-const transformBlockEntity = (entity, insert) => {
-  try {
-    const insertPoint = insert.position || { x: 0, y: 0 };
-    const scale = insert.scale || { x: 1, y: 1 };
-    const rotation = insert.rotation || 0;
-    
-    // 변환된 엔티티의 기본 속성
-    const transformed = {
-      type: entity.type,
-      layer: entity.layer || insert.layer || 'default',
-      color: entity.color !== 0 ? entity.color : insert.color || 7  // 0은 BYLAYER
-    };
-    
-    // 좌표 변환 함수
-    const transformPoint = (point) => {
-      if (!point) return { x: 0, y: 0 };
-      
-      // 스케일 적용
-      const scaled = {
-        x: point.x * scale.x,
-        y: point.y * scale.y
-      };
-      
-      // 회전 적용 (라디안으로 변환)
-      const rotRad = rotation * Math.PI / 180;
-      const rotated = {
-        x: scaled.x * Math.cos(rotRad) - scaled.y * Math.sin(rotRad),
-        y: scaled.x * Math.sin(rotRad) + scaled.y * Math.cos(rotRad)
-      };
-      
-      // 위치 이동
-      return {
-        x: rotated.x + insertPoint.x,
-        y: rotated.y + insertPoint.y
-      };
-    };
-    
-    // 엔티티 유형별 변환
-    switch (entity.type) {
-      case 'LINE':
-        transformed.start = transformPoint(entity.vertices?.[0] || entity.startPoint);
-        transformed.end = transformPoint(entity.vertices?.[1] || entity.endPoint);
-        break;
-        
-      case 'LWPOLYLINE':
-      case 'POLYLINE':
-        if (entity.vertices && entity.vertices.length > 0) {
-          transformed.closed = entity.shape === true || entity.closed === true;
-          transformed.vertices = entity.vertices.map(v => transformPoint(v));
-        }
-        break;
-        
-      case 'CIRCLE':
-        transformed.center = transformPoint(entity.center);
-        transformed.radius = entity.radius * Math.max(scale.x, scale.y);
-        break;
-        
-      case 'ARC':
-        transformed.center = transformPoint(entity.center);
-        transformed.radius = entity.radius * Math.max(scale.x, scale.y);
-        transformed.startAngle = entity.startAngle + rotation;
-        transformed.endAngle = entity.endAngle + rotation;
-        break;
-        
-      case 'TEXT':
-      case 'MTEXT':
-        transformed.position = transformPoint(entity.position);
-        transformed.text = entity.text || '';
-        transformed.height = (entity.height || 12) * Math.max(scale.x, scale.y);
-        transformed.rotation = (entity.rotation || 0) + rotation;
-        break;
-        
-      case 'ELLIPSE':
-        // 타원 변환 - 센터만 변환하고 크기는 스케일 적용
-        if (entity.center && entity.majorAxis) {
-          transformed.center = transformPoint(entity.center);
-          transformed.majorAxis = {
-            x: (entity.majorAxis.x || 0) * scale.x,
-            y: (entity.majorAxis.y || 0) * scale.y
-          };
-          transformed.ratio = entity.ratio || 1;
-          // ELLIPSE는 나중에 ARC들로 분할될 예정이므로 일단 보존
-        }
-        break;
-        
-      case 'SPLINE':
-        // SPLINE 변환 - 제어점들 변환
-        if (entity.controlPoints && entity.controlPoints.length > 0) {
-          transformed.controlPoints = entity.controlPoints.map(cp => transformPoint(cp));
-        } else if (entity.fitPoints && entity.fitPoints.length > 0) {
-          transformed.fitPoints = entity.fitPoints.map(fp => transformPoint(fp));
-        }
-        break;
-        
-      case 'POINT':
-        // POINT 변환
-        if (entity.position) {
-          transformed.position = transformPoint(entity.position);
-        }
-        break;
-        
-      default:
-        return null;  // 지원되지 않는 엔티티 유형
-    }
-    
-    return transformed;
-  } catch (error) {
-    console.error('블록 엔티티 변환 오류:', error.message);
-    return null;
-  }
-};
-
-/**
- * 문(도어) 감지 함수
- */
-const findDoors = (entities) => {
+const detect90DegreeDoors = (helper) => {
   const doors = [];
   
-  // DOOR 레이어에서 엔티티 검색
-  entities.forEach((entity, index) => {
-    const layer = entity.layer ? entity.layer.toUpperCase() : '';
-    const isDoorLayer = layer === 'DOOR' || layer.includes('DOOR');
-    
-    if (isDoorLayer) {
-      if (entity.type === 'LINE') {
-        doors.push({
-          id: doors.length,
-          type: 'door',
-          layer: entity.layer,
-          position: {
-            x: Math.min(entity.start.x, entity.end.x),
-            y: Math.min(entity.start.y, entity.end.y)
-          },
-          width: Math.abs(entity.end.x - entity.start.x) || 20,
-          height: Math.abs(entity.end.y - entity.start.y) || 20
-        });
-      } else if ((entity.type === 'POLYLINE' || entity.type === 'LWPOLYLINE') && entity.vertices && entity.vertices.length >= 2) {
-        // 폴리라인의 경계 상자 계산
-        const xValues = entity.vertices.map(v => v.x || 0);
-        const yValues = entity.vertices.map(v => v.y || 0);
-        const minX = Math.min(...xValues);
-        const minY = Math.min(...yValues);
-        const maxX = Math.max(...xValues);
-        const maxY = Math.max(...yValues);
-        
-        doors.push({
-          id: doors.length,
-          type: 'door',
-          layer: entity.layer,
-          position: { x: minX, y: minY },
-          width: maxX - minX || 20,
-          height: maxY - minY || 20
-        });
-      }
-    } else if (entity.type === 'INSERT' && entity.name && 
-              (entity.name.toUpperCase().includes('DOOR') || 
-               entity.name.toUpperCase().includes('DR'))) {
-      // 도어 블록 처리
-      const pos = entity.position || { x: 0, y: 0 };
-      const scale = entity.scale || { x: 1, y: 1 };
+  try {
+    if (helper.denormalised) {
+      console.log('\n🚪 ARC 문 감지 상세 분석:');
       
-      doors.push({
-        id: doors.length,
-        type: 'door',
-        layer: entity.layer || 'DOOR',
-        position: { x: pos.x, y: pos.y },
-        width: 30 * scale.x,  // 기본 문 크기 추정
-        height: 10 * scale.y
+      helper.denormalised.forEach((entity, index) => {
+        if (entity.type === 'ARC' && entity.center && entity.radius) {
+          const startAngle = entity.startAngle || 0;
+          const endAngle = entity.endAngle || 0;
+          
+          // 각도를 도(degree)로 변환 (라디안일 수 있음)
+          let startDeg = startAngle * (180 / Math.PI);
+          let endDeg = endAngle * (180 / Math.PI);
+          
+          // 음수 각도 정규화
+          if (startDeg < 0) startDeg += 360;
+          if (endDeg < 0) endDeg += 360;
+          
+          let angleDiff = Math.abs(endDeg - startDeg);
+          
+          // 360도를 넘는 경우 처리
+          if (angleDiff > 180) {
+            angleDiff = 360 - angleDiff;
+          }
+          
+          console.log(`   ARC[${index}]: 반지름=${entity.radius?.toFixed?.(0) || entity.radius}mm, 시작=${startDeg.toFixed(1)}°, 끝=${endDeg.toFixed(1)}°, 차이=${angleDiff.toFixed(1)}°, 레이어=${entity.layer || '기본'}`);
+          
+          // 문 호 조건 확장: 60도~120도 범위, 반지름 30cm~200cm
+          const isValidRadius = entity.radius >= 300 && entity.radius <= 2000; // 30cm~200cm (mm 단위)
+          const isValidAngle = angleDiff >= 60 && angleDiff <= 120;
+          
+          if (isValidRadius && isValidAngle) {
+            doors.push({
+              center: entity.center,
+              radius: entity.radius,
+              angle: angleDiff,
+              layer: entity.layer || '기본',
+              entity: entity
+            });
+            
+            console.log(`   🎯 문 호 후보 발견! 반지름=${entity.radius.toFixed(0)}mm, 각도=${angleDiff.toFixed(1)}°`);
+          } else {
+            const reasons = [];
+            if (!isValidRadius) reasons.push(`반지름=${entity.radius.toFixed(0)}mm (범위밖)`);
+            if (!isValidAngle) reasons.push(`각도=${angleDiff.toFixed(1)}° (범위밖)`);
+            console.log(`   ❌ 제외: ${reasons.join(', ')}`);
+          }
+        }
       });
     }
-  });
+    
+  } catch (error) {
+    console.warn('90도 문 감지 실패:', error.message);
+  }
   
   return doors;
 };
 
 /**
- * RGB 색상을 16진수 형식으로 변환
+ * ARC 엔티티 분석 (문 호 패턴 찾기)
  */
-const rgbToHex = (r, g, b) => {
-  return '#' + [r, g, b].map(x => {
-    const hex = Math.max(0, Math.min(255, Math.round(x))).toString(16);
-    return hex.length === 1 ? '0' + hex : hex;
-  }).join('');
-};
-
-/**
- * ACI 색상 인덱스를 RGB로 변환 (AutoCAD 색상 인덱스)
- */
-const aciToRgb = (colorIndex) => {
-  // AutoCAD 색상 테이블 (주요 색상만 포함)
-  const aciColors = {
-    1: [255, 0, 0],     // 빨강
-    2: [255, 255, 0],   // 노랑
-    3: [0, 255, 0],     // 초록
-    4: [0, 255, 255],   // 청록
-    5: [0, 0, 255],     // 파랑
-    6: [255, 0, 255],   // 마젠타
-    7: [255, 255, 255], // 흰색
-    8: [128, 128, 128], // 회색
-    9: [192, 192, 192]  // 밝은 회색
-  };
+const analyzeArcEntities = (helper) => {
+  console.log('\n=== ARC 엔티티 분석 ===');
   
-  if (colorIndex === 0 || colorIndex === 256) {
-    return '#000000'; // BYBLOCK 또는 BYLAYER
-  }
+  let arcCount = 0;
+  const arcTypes = {};
+  const angleGroups = { '90도근처': 0, '기타': 0 };
   
-  if (aciColors[colorIndex]) {
-    return rgbToHex(...aciColors[colorIndex]);
-  }
-  
-  // 기본 검정
-  return '#000000';
-};
-
-/**
- * SVG 생성 함수
- */
-const generateSvg = async (entities, filePath) => {
   try {
-    // 엔티티가 없으면 오류 발생
-    if (!entities || entities.length === 0) {
-      throw new Error('SVG를 생성할 엔티티가 없습니다');
+    if (helper.denormalised) {
+      helper.denormalised.forEach((entity, index) => {
+        if (entity.type === 'ARC') {
+          arcCount++;
+          
+          const radius = entity.radius || 0;
+          const startAngle = entity.startAngle || 0;
+          const endAngle = entity.endAngle || 0;
+          const angleDiff = Math.abs(endAngle - startAngle);
+          const layer = entity.layer || '기본';
+          
+          // 90도 근처인지 분류
+          if (angleDiff >= 80 && angleDiff <= 100) {
+            angleGroups['90도근처']++;
+            console.log(`📐 90도 후보 ARC: 레이어=${layer}, 반지름=${radius.toFixed(0)}mm, 각도=${angleDiff.toFixed(1)}°`);
+          } else {
+            angleGroups['기타']++;
+          }
+          
+          // 레이어별 통계
+          if (!arcTypes[layer]) {
+            arcTypes[layer] = [];
+          }
+          arcTypes[layer].push({
+            radius: radius.toFixed(0),
+            angle: angleDiff.toFixed(0)
+          });
+        }
+      });
     }
     
-    // 뷰포트 계산 - 개선된 방법 사용
-    const tightBounds = calculateTightBounds(entities);
+    console.log(`\n총 ARC 엔티티 개수: ${arcCount}`);
+    console.log(`90도 근처 ARC: ${angleGroups['90도근처']}개`);
+    console.log(`기타 각도 ARC: ${angleGroups['기타']}개`);
+    console.log('\n레이어별 ARC 분포:');
+    Object.entries(arcTypes).forEach(([layer, arcs]) => {
+      console.log(`  ${layer}: ${arcs.length}개`);
+    });
     
-    if (!tightBounds) {
-      throw new Error('유효한 도면 범위를 계산할 수 없습니다');
-    }
-    
-    console.log(`tightBounds 계산 결과:`, tightBounds);
-    
-    let minX = tightBounds.minX;
-    let minY = tightBounds.minY;
-    let maxX = tightBounds.maxX;
-    let maxY = tightBounds.maxY;
-    
-    console.log(`padding 적용 전: minX=${minX.toFixed(2)}, minY=${minY.toFixed(2)}, maxX=${maxX.toFixed(2)}, maxY=${maxY.toFixed(2)}`);
-    
-    // 여백 추가 (더 크게)
-    const padding = Math.max((maxX - minX) * 0.1, (maxY - minY) * 0.1, 50);
-    console.log(`계산된 padding: ${padding.toFixed(2)}`);
-    
-    minX -= padding;
-    minY -= padding;
-    maxX += padding;
-    maxY += padding;
-    
-    const width = maxX - minX;
-    const height = maxY - minY;
-    
-    console.log(`padding 적용 후: minX=${minX.toFixed(2)}, minY=${minY.toFixed(2)}, maxX=${maxX.toFixed(2)}, maxY=${maxY.toFixed(2)}`);
-    console.log(`최종 viewBox: "${minX} ${-maxY} ${width} ${height}"`);
-    console.log(`도면 범위: (${minX}, ${minY}) - (${maxX}, ${maxY}), 크기: ${width} x ${height}`);
-    
-    // SVG 생성 (Y축 반전 적용)
-    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" 
-                viewBox="${minX} ${-maxY} ${width} ${height}" preserveAspectRatio="xMidYMid meet">
-<style>
-  * { stroke-width: 1.0; fill: none; stroke: #111; vector-effect: non-scaling-stroke; }
-  .background { fill: #fff; stroke: none; }
-  .layer-0 { stroke: #111; stroke-width: 1.0; }
-  .layer-wall { stroke: #000; stroke-width: 2.0; }
-  .layer-door { stroke: #333; stroke-width: 1.5; }
-  .layer-window { stroke: #555; stroke-width: 1.0; }
-</style>
-<g transform="scale(1, -1)">
-<rect class="background" x="${minX}" y="${minY}" width="${width}" height="${height}" />
-`;
-    
-    // 엔티티 그리기
-    entities.forEach(entity => {
-      try {
-        // 기본 색상은 검은색, 레이어에 따라 다른 색상 적용
-        let strokeColor = '#111111';
-        let strokeWidth = '1.0';
+  } catch (error) {
+    console.warn('ARC 분석 실패:', error.message);
+  }
+};
+
+/**
+ * 텍스트 엔티티 분석 및 방 이름 감지 (개선된 버전)
+ */
+const analyzeTextEntities = (helper) => {
+  console.log('\n=== 상세 텍스트 엔티티 분석 (방 이름 찾기) ===');
+  
+  const roomKeywords = ['부엌', '주방', 'kitchen', 'WC', '화장실', '욕실', 'toilet', 'bath', 
+                       '거실', 'living', '침실', 'bedroom', '방', 'room', '현관', 'entrance',
+                       'laundry', '세탁', 'balcony', '발코니', 'master', '안방'];
+  const foundTexts = [];
+  
+  // 전체 엔티티 타입 분석
+  const entityTypes = {};
+  let totalEntities = 0;
+  
+  try {
+    if (helper.denormalised) {
+      console.log(`\n전체 정규화된 엔티티 개수: ${helper.denormalised.length}`);
+      
+      helper.denormalised.forEach((entity, index) => {
+        totalEntities++;
+        const entityType = entity.type || 'UNKNOWN';
         
-        // 레이어별 색상 설정
-        if (entity.layer) {
-          const layer = entity.layer.toLowerCase();
-          if (layer.includes('wall') || layer.includes('벽')) {
-            strokeColor = '#000000';
-            strokeWidth = '2.0';
-          } else if (layer.includes('door') || layer.includes('문')) {
-            strokeColor = '#333333';
-            strokeWidth = '1.5';
-          } else if (layer.includes('window') || layer.includes('창')) {
-            strokeColor = '#555555';
-            strokeWidth = '1.0';
+        // 엔티티 타입별 카운트
+        if (!entityTypes[entityType]) {
+          entityTypes[entityType] = 0;
+        }
+        entityTypes[entityType]++;
+        
+        // 텍스트 관련 엔티티들 체크 (더 포괄적으로)
+        if (entityType === 'TEXT' || entityType === 'MTEXT' || entityType === 'ATTDEF' || entityType === 'ATTRIB') {
+          console.log(`\n🔍 텍스트 엔티티 발견 [${index}]:`);
+          console.log(`   타입: ${entityType}`);
+          console.log(`   전체 속성:`, Object.keys(entity));
+          
+          // 가능한 모든 텍스트 속성 확인
+          const textFields = ['text', 'value', 'textValue', 'contents', 'string', 'textString'];
+          let foundText = null;
+          
+          textFields.forEach(field => {
+            if (entity[field] && typeof entity[field] === 'string' && entity[field].trim()) {
+              foundText = entity[field].trim();
+              console.log(`   텍스트 (${field}): "${foundText}"`);
+            }
+          });
+          
+          if (foundText) {
+            const text = foundText.toLowerCase();
+            const isRoomName = roomKeywords.some(keyword => 
+              text.includes(keyword.toLowerCase())
+            );
+            
+            // 좌표 정보 추출 (MTEXT의 경우 더 상세한 분석)
+            console.log(`   좌표 관련 속성들:`, {
+              x: entity.x,
+              y: entity.y, 
+              z: entity.z,
+              position: entity.position,
+              startPoint: entity.startPoint,
+              insertionPoint: entity.insertionPoint,
+              transforms: entity.transforms
+            });
+            
+            // transforms 배열에서 좌표 찾기
+            let actualPosition = { x: 0, y: 0 };
+            
+            if (entity.transforms && Array.isArray(entity.transforms) && entity.transforms.length > 0) {
+              // 첫 번째 transform에서 좌표 가져오기
+              const transform = entity.transforms[0];
+              if (transform && typeof transform === 'object') {
+                actualPosition.x = transform.x || transform.transformX || transform.translateX || 0;
+                actualPosition.y = transform.y || transform.transformY || transform.translateY || 0;
+                console.log(`   Transform 좌표: x=${actualPosition.x}, y=${actualPosition.y}`);
+              }
+            }
+            
+            // 기본 좌표가 0,0이 아니면 우선 사용
+            if (entity.x !== undefined && entity.y !== undefined && (entity.x !== 1 || entity.y !== 0)) {
+              actualPosition.x = entity.x;
+              actualPosition.y = entity.y;
+              console.log(`   직접 좌표: x=${actualPosition.x}, y=${actualPosition.y}`);
+            }
+            
+            foundTexts.push({
+              text: foundText,
+              position: actualPosition,
+              layer: entity.layer || '기본',
+              isRoomCandidate: isRoomName,
+              entityType: entityType,
+              index: index,
+              rawEntity: entity // 디버깅용
+            });
+            
+            console.log(`   최종 위치: x=${actualPosition.x?.toFixed?.(0) || actualPosition.x || 'N/A'}, y=${actualPosition.y?.toFixed?.(0) || actualPosition.y || 'N/A'}`);
+            console.log(`   레이어: ${entity.layer || '기본'}`);
+            console.log(`   방 이름 후보: ${isRoomName ? '✅ YES' : '❌ NO'}`);
+          } else {
+            console.log(`   ⚠️ 텍스트 내용을 찾을 수 없음`);
           }
         }
         
-        const layerClass = entity.layer ? ` class="layer-${entity.layer.replace(/[^a-zA-Z0-9]/g, '')}"` : '';
-        const strokeStyle = ` stroke="${strokeColor}" stroke-width="${strokeWidth}"`;
-        
-        switch (entity.type) {
-          case 'LINE':
-            if (entity.start && entity.end) {
-              svg += `<line x1="${entity.start.x || 0}" y1="${entity.start.y || 0}" 
-                     x2="${entity.end.x || 0}" y2="${entity.end.y || 0}"${layerClass}${strokeStyle} />\n`;
-            }
-            break;
-          
-          case 'POLYLINE':
-          case 'LWPOLYLINE':
-            if (entity.vertices && entity.vertices.length > 0) {
-              // 유효하지 않은 좌표 필터링
-              const validVertices = entity.vertices.filter(v => v && (v.x !== undefined && v.y !== undefined));
+        // INSERT 엔티티 내부의 텍스트도 확인
+        if (entityType === 'INSERT' && entity.attributes) {
+          console.log(`\n🔍 INSERT 엔티티의 속성들 [${index}]:`);
+          entity.attributes.forEach((attr, attrIndex) => {
+            if (attr.text || attr.value) {
+              const text = attr.text || attr.value;
+              console.log(`   속성 텍스트 [${attrIndex}]: "${text}"`);
               
-              if (validVertices.length > 0) {
-                let points = validVertices.map(v => `${v.x || 0},${v.y || 0}`).join(' ');
-                if (entity.closed) {
-                  svg += `<polygon points="${points}"${layerClass}${strokeStyle} />\n`;
-                } else {
-                  svg += `<polyline points="${points}"${layerClass}${strokeStyle} />\n`;
-                }
+              if (text && typeof text === 'string' && text.trim()) {
+                const isRoomName = roomKeywords.some(keyword => 
+                  text.toLowerCase().includes(keyword.toLowerCase())
+                );
+                
+                foundTexts.push({
+                  text: text.trim(),
+                  position: entity.position || entity.startPoint || { x: 0, y: 0 },
+                  layer: entity.layer || '기본',
+                  isRoomCandidate: isRoomName,
+                  entityType: 'INSERT_ATTR',
+                  index: index
+                });
               }
             }
-            break;
-          
-          case 'CIRCLE':
-            if (entity.center) {
-              svg += `<circle cx="${entity.center.x || 0}" cy="${entity.center.y || 0}" 
-                     r="${entity.radius || 0}"${layerClass}${strokeStyle} />\n`;
-            }
-            break;
-          
-          case 'ARC':
-            if (entity.center && entity.radius) {
-              // SVG path로 변환
-              const startAngle = entity.startAngle || 0;
-              const endAngle = entity.endAngle || 360;
-              
-              const startRad = startAngle * Math.PI / 180;
-              const endRad = endAngle * Math.PI / 180;
-              
-              const start = {
-                x: (entity.center.x || 0) + (entity.radius || 0) * Math.cos(startRad),
-                y: (entity.center.y || 0) + (entity.radius || 0) * Math.sin(startRad)
-              };
-              
-              const end = {
-                x: (entity.center.x || 0) + (entity.radius || 0) * Math.cos(endRad),
-                y: (entity.center.y || 0) + (entity.radius || 0) * Math.sin(endRad)
-              };
-              
-              const largeArc = Math.abs(endAngle - startAngle) > 180 ? 1 : 0;
-              const sweep = endAngle > startAngle ? 1 : 0;
-              
-              svg += `<path d="M ${start.x} ${start.y} A ${entity.radius || 0} ${entity.radius || 0} 0 ${largeArc} ${sweep} ${end.x} ${end.y}"${layerClass}${strokeStyle} />\n`;
-            }
-            break;
-          
-          case 'TEXT':
-          case 'MTEXT':
-            if (entity.position && entity.text && entity.text.trim()) {
-              const text = entity.text.trim();
-              const isRoomLabel = isRoomName(text);
-              
-              // 모든 텍스트를 표시하되, 공간명은 더 크게
-              let fontSize = '14';
-              let fontWeight = '600';
-              
-              if (isRoomLabel) {
-                fontSize = '18';
-                fontWeight = '700';
-                strokeColor = '#000000'; // 공간명은 검은색으로
-              } else {
-                strokeColor = '#333333'; // 일반 텍스트는 조금 연하게
-              }
-              
-              const fillStyle = ` fill="${strokeColor}"`;
-              // Y축 반전을 상쇄하기 위해 텍스트에 다시 반전 적용
-              svg += `<text x="${entity.position.x || 0}" y="${entity.position.y || 0}" 
-                     font-family="Arial, sans-serif" font-size="${fontSize}" font-weight="${fontWeight}"
-                     transform="scale(1, -1) translate(0, ${-2 * (entity.position.y || 0)})"${layerClass}${fillStyle}>${text}</text>\n`;
-            }
-            break;
+          });
         }
-      } catch (err) {
-        // 오류 무시하고 계속
+      });
+      
+      // 엔티티 타입 요약 출력
+      console.log('\n📊 엔티티 타입별 분포:');
+      Object.entries(entityTypes)
+        .sort((a, b) => b[1] - a[1])
+        .forEach(([type, count]) => {
+          console.log(`   ${type}: ${count}개`);
+        });
+    }
+    
+    // 원본 parsed 데이터도 확인
+    if (helper.parsed && helper.parsed.entities) {
+      console.log(`\n원본 파싱된 엔티티 개수: ${helper.parsed.entities.length}`);
+      
+      // 원본에서 텍스트 엔티티 찾기
+      helper.parsed.entities.forEach((entity, index) => {
+        if (entity.type === 'TEXT' || entity.type === 'MTEXT') {
+          console.log(`\n🔍 원본 텍스트 엔티티 [${index}]:`);
+          console.log(`   타입: ${entity.type}`);
+          console.log(`   속성들:`, Object.keys(entity));
+          
+          if (entity.text) {
+            console.log(`   텍스트: "${entity.text}"`);
+          }
+        }
+      });
+    }
+    
+    console.log(`\n📝 총 발견된 텍스트: ${foundTexts.length}개`);
+    console.log(`🏠 방 이름 후보: ${foundTexts.filter(t => t.isRoomCandidate).length}개`);
+    
+    if (foundTexts.length > 0) {
+      console.log('\n발견된 텍스트 목록:');
+      foundTexts.forEach((text, index) => {
+        console.log(`   [${index + 1}] "${text.text}" (${text.entityType}) ${text.isRoomCandidate ? '🏠' : ''}`);
+      });
+    }
+    
+  } catch (error) {
+    console.warn('텍스트 분석 실패:', error.message);
+  }
+  
+  return foundTexts;
+};
+
+/**
+ * 방 이름 텍스트를 SVG에 추가 (스마트 배치)
+ */
+const addRoomLabels = (svgContent, helper) => {
+  try {
+    const roomTexts = analyzeTextEntities(helper);
+    
+    if (roomTexts.length === 0) {
+      console.log('추가할 방 라벨이 없음');
+      return svgContent;
+    }
+    
+    console.log(`${roomTexts.length}개의 방 라벨 추가 중... (스마트 배치)`);
+    
+    // 현재 viewBox에서 도면 크기 계산
+    const viewBoxMatch = svgContent.match(/viewBox="([^"]+)"/);
+    let centerX = 0, centerY = 0, width = 1000, height = 1000;
+    
+    if (viewBoxMatch) {
+      const [x, y, w, h] = viewBoxMatch[1].split(' ').map(Number);
+      centerX = x + w / 2;
+      centerY = y + h / 2;
+      width = w;
+      height = h;
+      console.log(`도면 영역: ${width.toFixed(0)} x ${height.toFixed(0)}, 중심: (${centerX.toFixed(0)}, ${centerY.toFixed(0)})`);
+    }
+    
+    // SVG 닫는 태그 찾기
+    const svgEndIndex = svgContent.lastIndexOf('</svg>');
+    if (svgEndIndex === -1) {
+      return svgContent;
+    }
+    
+    // 방 이름별 스마트 배치
+    let roomLabelsHtml = '\n  <!-- 방 이름 라벨 (스마트 배치) -->\n';
+    const roomPositions = calculateRoomPositions(roomTexts, centerX, centerY, width, height);
+    
+    roomTexts.forEach((roomText, index) => {
+      if (roomText.isRoomCandidate) {
+        const pos = roomPositions[index] || { x: centerX, y: centerY };
+        const cleanText = roomText.text.replace(/\\pxqc;/g, '').replace(/\\P/g, ' ').trim();
+        
+        roomLabelsHtml += `  <text class="room-label room-name" x="${pos.x}" y="${pos.y}">${cleanText}</text>\n`;
+        console.log(`   "${cleanText}" → (${pos.x.toFixed(0)}, ${pos.y.toFixed(0)})`);
       }
     });
     
-    // SVG 닫기
-    svg += '</g></svg>';
+    // 스타일 추가
+    const styleInsert = `  <style>
+    .room-label { 
+      font-family: Arial, sans-serif;
+      font-size: ${Math.min(width, height) * 0.03}px;
+      fill: #333333;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      pointer-events: none;
+    }
+    .room-name {
+      font-weight: bold;
+      font-size: ${Math.min(width, height) * 0.04}px;
+      fill: #000080;
+      text-shadow: 1px 1px 2px rgba(255,255,255,0.8);
+    }
+  </style>\n`;
     
-    // 저장 디렉토리 확인
-    const resultsDir = path.dirname(filePath);
-    if (!fs.existsSync(resultsDir)) {
-      fs.mkdirSync(resultsDir, { recursive: true });
+    // 첫 번째 <g> 태그나 적절한 위치 찾기
+    const firstGroupIndex = svgContent.indexOf('<g');
+    if (firstGroupIndex !== -1) {
+      svgContent = svgContent.slice(0, firstGroupIndex) + styleInsert + svgContent.slice(firstGroupIndex);
     }
     
-    // 파일에 저장 (프로미스 사용)
-    await fs.promises.writeFile(filePath, svg, 'utf8');
-    console.log(`SVG 파일 저장 완료: ${filePath}`);
+    // 방 라벨을 SVG 끝 부분에 추가
+    svgContent = svgContent.slice(0, svgEndIndex) + roomLabelsHtml + svgContent.slice(svgEndIndex);
     
-    return filePath;
+    return svgContent;
+    
   } catch (error) {
-    console.error(`SVG 생성 오류: ${error.message}`);
-    throw error;
+    console.warn('방 라벨 추가 실패:', error.message);
+    return svgContent;
   }
 };
 
 /**
- * 실제 엔티티가 있는 영역만 계산하는 함수
+ * 방 이름별 최적 위치 계산
  */
-const calculateTightBounds = (entities) => {
-  if (!entities || entities.length === 0) {
-    return null;
-  }
-
-  // 모든 엔티티의 좌표 수집
-  const points = [];
+const calculateRoomPositions = (roomTexts, centerX, centerY, width, height) => {
+  const positions = [];
+  const roomNames = roomTexts.filter(t => t.isRoomCandidate);
   
-  entities.forEach(entity => {
-    try {
-      switch (entity.type) {
-        case 'LINE':
-          if (entity.start && entity.end) {
-            points.push(entity.start, entity.end);
-          }
-          break;
-          
-        case 'POLYLINE':
-        case 'LWPOLYLINE':
-          if (entity.vertices) {
-            points.push(...entity.vertices);
-          }
-          break;
-          
-        case 'CIRCLE':
-        case 'ARC':
-          if (entity.center && entity.radius) {
-            const r = entity.radius;
-            points.push(
-              { x: entity.center.x - r, y: entity.center.y - r },
-              { x: entity.center.x + r, y: entity.center.y + r }
-            );
-          }
-          break;
-          
-        case 'TEXT':
-        case 'MTEXT':
-          if (entity.position) {
-            points.push(entity.position);
-          }
-          break;
+  // 방별 위치 매핑 (일반적인 아파트 레이아웃 기준)
+  const roomLayoutMap = {
+    'KITCHEN': { x: centerX - width * 0.2, y: centerY - height * 0.1 },
+    'LIVING': { x: centerX + width * 0.1, y: centerY },
+    'MASTER BEDROOM': { x: centerX + width * 0.2, y: centerY - height * 0.2 },
+    'BEDROOM 1': { x: centerX - width * 0.2, y: centerY - height * 0.3 },
+    'BEDROOM 2': { x: centerX + width * 0.2, y: centerY + height * 0.2 },
+    'WC 1': { x: centerX - width * 0.1, y: centerY + height * 0.1 },
+    'WC 2': { x: centerX + width * 0.3, y: centerY - height * 0.1 },
+    'LAUNDRY': { x: centerX - width * 0.3, y: centerY + height * 0.2 },
+    'BALCONY': { x: centerX, y: centerY + height * 0.3 }
+  };
+  
+  roomTexts.forEach((roomText, index) => {
+    if (roomText.isRoomCandidate) {
+      const cleanName = roomText.text.replace(/\\pxqc;/g, '').replace(/\\P/g, ' ').trim();
+      const mappedPos = roomLayoutMap[cleanName];
+      
+      if (mappedPos) {
+        positions[index] = mappedPos;
+      } else {
+        // 기본 위치 (격자 배치)
+        const gridIndex = positions.filter(p => p).length;
+        const cols = 3;
+        const row = Math.floor(gridIndex / cols);
+        const col = gridIndex % cols;
+        
+        positions[index] = {
+          x: centerX + (col - 1) * width * 0.25,
+          y: centerY + (row - 1) * height * 0.2
+        };
       }
-    } catch (err) {
-      // 오류 무시하고 계속
     }
   });
-
-  if (points.length === 0) {
-    return null;
-  }
-
-  // 유효한 좌표만 필터링
-  const validPoints = points.filter(p => p && 
-    typeof p.x === 'number' && typeof p.y === 'number' &&
-    isFinite(p.x) && isFinite(p.y)
-  );
-
-  if (validPoints.length === 0) {
-    return null;
-  }
-
-  // 아웃라이어 제거를 위한 좌표별 정렬
-  const xCoords = validPoints.map(p => p.x).sort((a, b) => a - b);
-  const yCoords = validPoints.map(p => p.y).sort((a, b) => a - b);
   
-  // 상위/하위 2%를 아웃라이어로 간주하여 제거
-  const outlierPercent = 0.02;
-  const xStart = Math.floor(xCoords.length * outlierPercent);
-  const xEnd = Math.ceil(xCoords.length * (1 - outlierPercent));
-  const yStart = Math.floor(yCoords.length * outlierPercent);
-  const yEnd = Math.ceil(yCoords.length * (1 - outlierPercent));
-  
-  const minX = xCoords[xStart];
-  const maxX = xCoords[xEnd - 1];
-  const minY = yCoords[yStart];  
-  const maxY = yCoords[yEnd - 1];
-
-  // 결과가 유효한지 확인
-  if (maxX - minX <= 0 || maxY - minY <= 0) {
-    console.warn('아웃라이어 제거 후 유효하지 않은 범위, 전체 범위 사용');
-    return {
-      minX: Math.min(...xCoords),
-      maxX: Math.max(...xCoords),
-      minY: Math.min(...yCoords),
-      maxY: Math.max(...yCoords)
-    };
-  }
-
-  console.log(`아웃라이어 제거: ${validPoints.length}개 포인트 중 ${xCoords.length - (xEnd - xStart)}개 X 아웃라이어, ${yCoords.length - (yEnd - yStart)}개 Y 아웃라이어 제거`);
-  console.log(`정제된 범위: X(${minX.toFixed(2)} ~ ${maxX.toFixed(2)}), Y(${minY.toFixed(2)} ~ ${maxY.toFixed(2)})`);
-
-  return { minX, minY, maxX, maxY };
-};
-
-/**
- * 공간명인지 확인하는 함수 (더 포괄적으로)
- */
-const isRoomName = (text) => {
-  if (!text || typeof text !== 'string') return false;
-  
-  const roomKeywords = [
-    // 한국어 공간명
-    '화장실', '욕실', 'bathroom', 'toilet', 'wc',
-    '침실', 'bedroom', 'bed room', 'br',
-    '거실', 'living', 'living room', 'lr',
-    '주방', '부엌', 'kitchen', 'k',
-    '다이닝', 'dining', 'dining room', 'dr',
-    '서재', '공부방', 'study', 'study room',
-    '드레스룸', 'dress room', 'closet', 'walk-in',
-    '발코니', 'balcony', 'veranda',
-    '현관', 'entrance', 'entry', 'foyer',
-    '팬트리', 'pantry',
-    '세탁실', 'laundry', 'utility',
-    '계단', 'stairs', 'stair',
-    '복도', 'hall', 'corridor',
-    '창고', 'storage', 'store',
-    // 기타 공간
-    'room', '실', '방'
-  ];
-  
-  const lowerText = text.toLowerCase().trim();
-  
-  // 숫자나 기타 문자가 붙어있어도 매칭하도록 개선
-  return roomKeywords.some(keyword => 
-    lowerText.includes(keyword.toLowerCase())
-  );
+  return positions;
 };
 
 module.exports = {
-  processDwgFile,
-  parseDxfFile,
-  generateSvg
+  processCompleteDxfFile,
+  processDwgFile: processCompleteDxfFile, // 컨트롤러 호환성을 위한 별칭
+  
+  // 개별 함수들도 export (테스트/디버깅용)
+  convertDwgToDxf,
+  changeWallColors,
+  add90DegreeDoorMarkers,
+  detect90DegreeDoors,
+  analyzeArcEntities,
+  analyzeTextEntities,
+  addRoomLabels,
+  calculateRoomPositions
 }; 
