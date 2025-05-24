@@ -5,6 +5,63 @@ const fs = require('fs');
 // 가장 단순하고 안정적인 프로세서를 사용
 const dwgProcessor = require('../utils/dxfProcessor');
 
+// 파일 타입별 처리 함수
+const getFileType = (filename) => {
+  const ext = path.extname(filename).toLowerCase();
+  switch (ext) {
+    case '.dwg':
+      return 'dwg';
+    case '.jpg':
+    case '.jpeg':
+      return 'jpeg';
+    case '.png':
+      return 'png';
+    case '.pdf':
+      return 'pdf';
+    default:
+      return 'unknown';
+  }
+};
+
+// 이미지/PDF 파일을 위한 실제 파일 처리
+const processImageFile = async (jobId, filename, filePath, progressCallback) => {
+  const fileType = getFileType(filename);
+  
+  progressCallback(10, `${fileType.toUpperCase()} 파일 분석 중...`);
+  
+  // 잠시 대기 (실제 처리 시뮬레이션)
+  await new Promise(resolve => setTimeout(resolve, 500));
+  progressCallback(50, '파일 준비 중...');
+  
+  // results 폴더에 원본 파일 복사
+  const resultsDir = path.join(__dirname, '..', 'results');
+  if (!fs.existsSync(resultsDir)) {
+    fs.mkdirSync(resultsDir, { recursive: true });
+  }
+  
+  // 원본 파일 확장자 유지
+  const originalExt = path.extname(filename);
+  const resultFilePath = path.join(resultsDir, `${jobId}${originalExt}`);
+  
+  await new Promise(resolve => setTimeout(resolve, 500));
+  progressCallback(80, '파일 복사 중...');
+  
+  // 파일 복사
+  await fs.promises.copyFile(filePath, resultFilePath);
+  
+  progressCallback(100, '분석 완료');
+  
+  return {
+    jobId,
+    doors: [],
+    imageUrl: `/results/${jobId}${originalExt}`,
+    entityCount: 0,
+    success: true,
+    fileType,
+    originalFile: resultFilePath
+  };
+};
+
 // Upload a floorplan file
 exports.uploadFloorplan = async (req, res) => {
   try {
@@ -68,8 +125,20 @@ exports.uploadFloorplan = async (req, res) => {
       };
       
       // 직접 처리 - 예외 발생해도 서버 중단되지 않도록 try-catch로 감싸기
-      const result = await dwgProcessor.processDwgFile(jobId, filename, filePath, progressCallback);
-      console.log(`DWG processing completed for job: ${jobId}`);
+      const fileType = getFileType(filename);
+      let result;
+      
+      if (fileType === 'dwg') {
+        // DWG 파일 처리
+        result = await dwgProcessor.processDwgFile(jobId, filename, filePath, progressCallback);
+        console.log(`DWG processing completed for job: ${jobId}`);
+      } else if (['jpeg', 'png', 'pdf'].includes(fileType)) {
+        // 이미지/PDF 파일 처리
+        result = await processImageFile(jobId, filename, filePath, progressCallback);
+        console.log(`${fileType.toUpperCase()} processing completed for job: ${jobId}`);
+      } else {
+        throw new Error(`지원되지 않는 파일 형식: ${fileType}`);
+      }
       
       // 결과 저장
       const resultsDir = path.join(__dirname, '..', 'results');
@@ -77,16 +146,25 @@ exports.uploadFloorplan = async (req, res) => {
         fs.mkdirSync(resultsDir, { recursive: true });
       }
       
-      // SVG 파일 경로 확인
-      const svgPath = result.svgFile ? result.svgFile : path.join(resultsDir, `${jobId}.svg`);
-      const svgFilename = path.basename(svgPath);
+      // 파일 경로 및 URL 설정
+      let imageUrl, svgPath;
+      
+      if (fileType === 'dwg') {
+        // DWG 파일의 경우 SVG 파일 경로 사용
+        svgPath = result.svgFile ? result.svgFile : path.join(resultsDir, `${jobId}.svg`);
+        const svgFilename = path.basename(svgPath);
+        imageUrl = `/results/${svgFilename}`;
+      } else {
+        // 이미지/PDF 파일의 경우 이미 imageUrl이 설정됨
+        imageUrl = result.imageUrl;
+      }
       
       // 작업 완료 상태로 업데이트
       Job.updateJob(jobId, {
         status: 'done',
         progress: 100,
         doors: result.doors || [],
-        imageUrl: `/results/${svgFilename}`,
+        imageUrl: imageUrl,
         entityCount: result.entityCount || 0
       });
       
@@ -95,7 +173,7 @@ exports.uploadFloorplan = async (req, res) => {
         jobId,
         status: 'done',
         doors: result.doors || [],
-        imageUrl: `/results/${svgFilename}`,
+        imageUrl: imageUrl,
         entityCount: result.entityCount || 0
       });
       

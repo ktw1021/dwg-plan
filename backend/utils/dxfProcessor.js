@@ -398,6 +398,85 @@ const parseDxfFile = async (dxfFilePath) => {
                 height: entity.height || 12
               });
               break;
+
+            case 'ELLIPSE':
+              // 타원을 여러 개의 ARC로 근사화
+              if (entity.center && entity.majorAxis && entity.minorAxis) {
+                const cx = entity.center.x || 0;
+                const cy = entity.center.y || 0;
+                const majorRadius = Math.sqrt(
+                  Math.pow(entity.majorAxis.x || 0, 2) + Math.pow(entity.majorAxis.y || 0, 2)
+                );
+                const ratio = entity.ratio || 1; // 장축 대 단축 비율
+                const minorRadius = majorRadius * ratio;
+                
+                // 타원을 8개의 ARC로 분할하여 근사화
+                const segments = 8;
+                for (let i = 0; i < segments; i++) {
+                  const startAngle = (i * 360) / segments;
+                  const endAngle = ((i + 1) * 360) / segments;
+                  
+                  entities.push({
+                    type: 'ARC',
+                    layer: entity.layer || 'default',
+                    color: entity.color || 7,
+                    center: { x: cx, y: cy },
+                    radius: (majorRadius + minorRadius) / 2, // 평균 반지름 사용
+                    startAngle: startAngle,
+                    endAngle: endAngle
+                  });
+                }
+              }
+              break;
+
+            case 'SPLINE':
+              // SPLINE을 여러 개의 LINE으로 근사화
+              if (entity.controlPoints && entity.controlPoints.length > 1) {
+                for (let i = 0; i < entity.controlPoints.length - 1; i++) {
+                  const start = entity.controlPoints[i];
+                  const end = entity.controlPoints[i + 1];
+                  
+                  if (start && end) {
+                    entities.push({
+                      type: 'LINE',
+                      layer: entity.layer || 'default',
+                      color: entity.color || 7,
+                      start: { x: start.x || 0, y: start.y || 0 },
+                      end: { x: end.x || 0, y: end.y || 0 }
+                    });
+                  }
+                }
+              } else if (entity.fitPoints && entity.fitPoints.length > 1) {
+                // fitPoints가 있는 경우 사용
+                for (let i = 0; i < entity.fitPoints.length - 1; i++) {
+                  const start = entity.fitPoints[i];
+                  const end = entity.fitPoints[i + 1];
+                  
+                  if (start && end) {
+                    entities.push({
+                      type: 'LINE',
+                      layer: entity.layer || 'default',
+                      color: entity.color || 7,
+                      start: { x: start.x || 0, y: start.y || 0 },
+                      end: { x: end.x || 0, y: end.y || 0 }
+                    });
+                  }
+                }
+              }
+              break;
+
+            case 'POINT':
+              // POINT를 작은 CIRCLE로 표현
+              if (entity.position) {
+                entities.push({
+                  type: 'CIRCLE',
+                  layer: entity.layer || 'default',
+                  color: entity.color || 7,
+                  center: { x: entity.position.x || 0, y: entity.position.y || 0 },
+                  radius: 0.5 // 매우 작은 원으로 표현
+                });
+              }
+              break;
           }
         } catch (entityError) {
           // 엔티티 변환 오류는 조용히 건너뛰기
@@ -529,6 +608,35 @@ const transformBlockEntity = (entity, insert) => {
         transformed.text = entity.text || '';
         transformed.height = (entity.height || 12) * Math.max(scale.x, scale.y);
         transformed.rotation = (entity.rotation || 0) + rotation;
+        break;
+        
+      case 'ELLIPSE':
+        // 타원 변환 - 센터만 변환하고 크기는 스케일 적용
+        if (entity.center && entity.majorAxis) {
+          transformed.center = transformPoint(entity.center);
+          transformed.majorAxis = {
+            x: (entity.majorAxis.x || 0) * scale.x,
+            y: (entity.majorAxis.y || 0) * scale.y
+          };
+          transformed.ratio = entity.ratio || 1;
+          // ELLIPSE는 나중에 ARC들로 분할될 예정이므로 일단 보존
+        }
+        break;
+        
+      case 'SPLINE':
+        // SPLINE 변환 - 제어점들 변환
+        if (entity.controlPoints && entity.controlPoints.length > 0) {
+          transformed.controlPoints = entity.controlPoints.map(cp => transformPoint(cp));
+        } else if (entity.fitPoints && entity.fitPoints.length > 0) {
+          transformed.fitPoints = entity.fitPoints.map(fp => transformPoint(fp));
+        }
+        break;
+        
+      case 'POINT':
+        // POINT 변환
+        if (entity.position) {
+          transformed.position = transformPoint(entity.position);
+        }
         break;
         
       default:
