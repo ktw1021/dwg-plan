@@ -142,13 +142,35 @@ const optimizeViewBox = (svgContent) => {
  */
 const add90DegreeDoorMarkers = (svgContent, helper) => {
   try {
+    console.log('\n🚪 === add90DegreeDoorMarkers 함수 시작 ===');
+    console.log('helper 객체 확인:', !!helper);
+    console.log('helper.denormalised 확인:', !!helper?.denormalised);
+    console.log('helper.denormalised 길이:', helper?.denormalised?.length || 0);
+    
+    console.log('🔍 detect90DegreeDoors 호출 시작...');
     const doors = detect90DegreeDoors(helper);
+    console.log('🔍 detect90DegreeDoors 호출 완료. 결과:', doors);
+    console.log('🔍 반환된 문 개수:', doors?.length || 0);
+    
     console.log(`🚪 ${doors.length}개의 문 마커 추가 중...`);
     
     if (doors.length === 0) {
       console.log('감지된 문이 없어서 마커를 추가하지 않음');
       return svgContent;
     }
+    
+    // 🔥 직접 생성된 HTML 사용
+    if (doors.doorMarkersHtml) {
+      console.log('🔥 직접 생성된 빨간색 박스 HTML 사용');
+      const svgEndIndex = svgContent.lastIndexOf('</svg>');
+      if (svgEndIndex !== -1) {
+        const result = svgContent.slice(0, svgEndIndex) + doors.doorMarkersHtml + svgContent.slice(svgEndIndex);
+        console.log(`🔥 빨간색 박스 추가 완료: ${svgContent.length} -> ${result.length} (${result.length - svgContent.length} 바이트 추가)`);
+        return result;
+      }
+    }
+    
+    console.log('⚠️ doorMarkersHtml이 없어서 기존 방식 사용');
     
     const svgEndIndex = svgContent.lastIndexOf('</svg>');
     if (svgEndIndex === -1) {
@@ -165,20 +187,24 @@ const add90DegreeDoorMarkers = (svgContent, helper) => {
       let markerSize = 300; // 기본 크기 (30cm)
       
       if (door.type === 'ARC_DOOR' && door.radius) {
-        markerSize = Math.max(door.radius * 0.3, 200); // ARC 반지름의 30%, 최소 20cm
+        markerSize = door.radius * 2; // ARC 반지름의 2배로 설정 (호의 지름)
+        console.log(`   ARC 문 마커 크기: 반지름=${door.radius.toFixed(0)}mm -> 마커=${markerSize.toFixed(0)}mm`);
       } else if (door.type === 'INSERT_DOOR') {
         markerSize = 400; // INSERT 블록은 조금 더 크게
       }
       
-      // 빨간색 박스 마커 생성
-      doorMarkersHtml += `  <rect class="door-marker" ` +
+      // 빨간색 박스 마커 생성 (인라인 스타일 사용)
+      doorMarkersHtml += `  <rect ` +
                         `x="${centerX - markerSize/2}" y="${centerY - markerSize/2}" ` +
-                        `width="${markerSize}" height="${markerSize}" />\n`;
+                        `width="${markerSize}" height="${markerSize}" ` +
+                        `stroke="#ff0000" stroke-width="6" fill="none" opacity="0.9" />\n`;
       
-      // 문 번호 라벨 추가
-      doorMarkersHtml += `  <text class="door-label" ` +
+      // 문 번호 라벨 추가 (인라인 스타일 사용)
+      doorMarkersHtml += `  <text ` +
                         `x="${centerX}" y="${centerY + 5}" ` +
-                        `text-anchor="middle" dominant-baseline="middle">문${index + 1}</text>\n`;
+                        `text-anchor="middle" dominant-baseline="middle" ` +
+                        `font-family="Arial, sans-serif" font-size="24" font-weight="bold" ` +
+                        `fill="#ff0000" stroke="#ffffff" stroke-width="1">문${index + 1}</text>\n`;
       
       console.log(`   문 ${index + 1}: (${centerX.toFixed(0)}, ${centerY.toFixed(0)}) - ${door.type} - 크기=${markerSize.toFixed(0)}`);
     });
@@ -352,23 +378,6 @@ const generateIntegratedStyles = (viewBox, customStyles) => {
       fill: #000080;
       text-shadow: 1px 1px 2px rgba(255,255,255,0.8);
     }
-    .door-marker { 
-      stroke: #ff0000; 
-      stroke-width: 6; 
-      fill: rgba(255, 0, 0, 0.3); 
-      opacity: 0.9;
-      rx: 5;
-      ry: 5;
-    }
-    .door-label {
-      font-family: Arial, sans-serif;
-      font-size: ${fontSize * 0.8}px;
-      font-weight: bold;
-      fill: #ffffff;
-      stroke: #ff0000;
-      stroke-width: 1;
-      text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
-    }
   </style>\n`;
   
   return baseStyles + customStyles;
@@ -378,11 +387,28 @@ const generateIntegratedStyles = (viewBox, customStyles) => {
  * Helper SVG와 커스텀 요소들을 병합
  */
 const mergeHelperAndCustomSvg = (helper, customRenderResult) => {
+  console.log('\n🔧🔧🔧 === mergeHelperAndCustomSvg 함수 진입 ===');
+  console.log('🔧🔧🔧 helper 객체:', !!helper);
+  console.log('🔧🔧🔧 customRenderResult 객체:', !!customRenderResult);
+  
   try {
     console.log('\n🔧 === SVG 병합 시작 ===');
     
+    // helper 객체 유효성 검사
+    if (!helper) {
+      throw new Error('helper 객체가 null 또는 undefined입니다');
+    }
+    
+    if (typeof helper.toSVG !== 'function') {
+      throw new Error('helper.toSVG 함수가 존재하지 않습니다');
+    }
+    
+    console.log('🔧 helper.toSVG() 호출 시작...');
+    
     // 1단계: Helper에서 기본 SVG 생성
     let svgContent = helper.toSVG();
+    
+    console.log('🔧 helper.toSVG() 호출 완료');
     console.log(`기본 SVG 크기: ${(svgContent.length / 1024).toFixed(1)} KB`);
     
     // 2단계: viewBox 정보 추출
@@ -396,7 +422,42 @@ const mergeHelperAndCustomSvg = (helper, customRenderResult) => {
     // svgContent = optimizeViewBox(svgContent);  // 임시로 비활성화
     
     // 5단계: 문 마커 추가 (빨간색 박스)
-    svgContent = add90DegreeDoorMarkers(svgContent, helper);
+    console.log('🚪🚪🚪 === 5단계: 문 마커 추가 시작 ===');
+    console.log('🚪🚪🚪 add90DegreeDoorMarkers 호출 직전');
+    console.log('🚪🚪🚪 helper 객체:', !!helper);
+    console.log('🚪🚪🚪 helper.denormalised:', !!helper?.denormalised);
+    console.log('🚪🚪🚪 helper.denormalised 길이:', helper?.denormalised?.length || 0);
+    
+    try {
+      console.log('🚪🚪🚪 add90DegreeDoorMarkers 함수 호출 시작...');
+      const beforeLength = svgContent.length;
+      
+      console.log('🚪🚪🚪 === CRITICAL: add90DegreeDoorMarkers 함수 강제 호출 ===');
+      console.log('🚪🚪🚪 SVG 길이 (호출 전):', beforeLength);
+      console.log('🚪🚪🚪 helper 상태:', typeof helper);
+      console.log('🚪🚪🚪 add90DegreeDoorMarkers 함수 존재:', typeof add90DegreeDoorMarkers);
+      
+      svgContent = add90DegreeDoorMarkers(svgContent, helper);
+      
+      const afterLength = svgContent.length;
+      console.log(`🚪🚪🚪 add90DegreeDoorMarkers 완료: ${beforeLength} -> ${afterLength} (${afterLength - beforeLength} 바이트 추가)`);
+      
+      // 빨간색 박스가 실제로 추가되었는지 확인
+      const redBoxCount = (svgContent.match(/stroke="#ff0000"/g) || []).length;
+      console.log(`🚪🚪🚪 빨간색 박스 개수 확인: ${redBoxCount}개`);
+      
+      if (redBoxCount > 0) {
+        console.log('🚪🚪🚪 ✅ 빨간색 박스가 성공적으로 추가됨!');
+      } else {
+        console.log('🚪🚪🚪 ❌ 빨간색 박스가 추가되지 않음!');
+      }
+      
+    } catch (doorMarkerError) {
+      console.error('🚪🚪🚪 add90DegreeDoorMarkers 에러:', doorMarkerError.message);
+      console.error('🚪🚪🚪 에러 스택:', doorMarkerError.stack);
+    }
+    
+    console.log('🚪🚪🚪 === 5단계: 문 마커 추가 완료 ===');
     
     // 6단계: 스윙도어 감지 및 표시
     try {
@@ -438,9 +499,24 @@ const mergeHelperAndCustomSvg = (helper, customRenderResult) => {
     return svgContent;
     
   } catch (error) {
-    console.error('SVG 병합 실패:', error.message);
+    console.error('❌❌❌ SVG 병합 실패 - 강력한 에러 로깅 ❌❌❌');
+    console.error('❌ 에러 메시지:', error.message);
+    console.error('❌ 에러 스택:', error.stack);
+    console.error('❌ 에러 타입:', error.constructor.name);
+    console.error('❌ helper 객체 상태:', !!helper);
+    console.error('❌ helper.denormalised 상태:', !!helper?.denormalised);
+    console.error('❌ customRenderResult 상태:', !!customRenderResult);
+    
     // 실패 시 기본 SVG 반환
-    return helper.toSVG();
+    console.log('🔄🔄🔄 기본 SVG 반환 중...');
+    try {
+      const basicSvg = helper.toSVG();
+      console.log(`🔄 기본 SVG 크기: ${(basicSvg.length / 1024).toFixed(1)} KB`);
+      return basicSvg;
+    } catch (basicError) {
+      console.error('❌ 기본 SVG 생성도 실패:', basicError.message);
+      return '<svg></svg>'; // 최후의 fallback
+    }
   }
 };
 

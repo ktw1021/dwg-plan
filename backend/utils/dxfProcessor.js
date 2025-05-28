@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const { Helper } = require('dxf');
+const path = require('path');
 
 // 모듈화된 컴포넌트들
 const { loadDxfContent } = require('./dwgConverter');
@@ -55,7 +56,9 @@ const processCompleteDxfFile = async (jobId, filename, filePath, progressCallbac
     // 3단계: 종합 분석 수행
     logProcessingProgress('종합 분석 수행');
     progressCallback(40, '종합 분석 중...');
+    console.log('🔍 performComprehensiveAnalysis 호출 시작...');
     const analysisResult = performComprehensiveAnalysis(helper);
+    console.log('🔍 performComprehensiveAnalysis 호출 완료:', analysisResult ? '성공' : '실패');
     
     // 4단계: 고급 엔티티 필터링 (텍스트 보존하면서 이상한 점들 제거)
     logProcessingProgress('고급 엔티티 필터링');
@@ -83,7 +86,19 @@ const processCompleteDxfFile = async (jobId, filename, filePath, progressCallbac
     // 6단계: SVG 병합 및 최적화
     logProcessingProgress('SVG 병합 및 최적화');
     progressCallback(70, 'SVG 병합 및 최적화 중...');
+    console.log('\n🔧 === mergeHelperAndCustomSvg 호출 시작 ===');
+    console.log('helper 객체 확인:', !!helper);
+    console.log('helper.denormalised 확인:', !!helper?.denormalised);
+    console.log('helper.denormalised 길이:', helper?.denormalised?.length || 0);
+    console.log('customRenderResult 확인:', !!customRenderResult);
+    console.log('🔍 mergeHelperAndCustomSvg 함수 타입:', typeof mergeHelperAndCustomSvg);
+    console.log('🔍 mergeHelperAndCustomSvg 함수 이름:', mergeHelperAndCustomSvg.name);
+    console.log('🔍 mergeHelperAndCustomSvg 함수 길이:', mergeHelperAndCustomSvg.length);
+    
     let finalSvgContent = mergeHelperAndCustomSvg(helper, customRenderResult);
+    
+    console.log('🔧 mergeHelperAndCustomSvg 호출 완료');
+    console.log('finalSvgContent 길이:', finalSvgContent?.length || 0);
     
     // 7단계: SVG 후처리
     logProcessingProgress('SVG 후처리');
@@ -91,9 +106,52 @@ const processCompleteDxfFile = async (jobId, filename, filePath, progressCallbac
     finalSvgContent = postProcessSvg(finalSvgContent);
     
     // 8단계: SVG 파일 저장
-    logProcessingProgress('SVG 파일 저장');
-    progressCallback(90, 'SVG 파일 저장 중...');
-    const svgFileInfo = saveSvgFile(jobId, finalSvgContent);
+    console.log('[90%] SVG 파일 저장 중...');
+    
+    // 🔥 강제 문 마커 추가 (최종 단계)
+    console.log('🔥🔥🔥 === 강제 문 마커 추가 시작 ===');
+    try {
+      const { detect90DegreeDoors } = require('./dxfAnalyzer');
+      const doorsResult = detect90DegreeDoors(helper);
+      console.log(`🔥 감지된 문 개수: ${doorsResult.length}개`);
+      
+      // doorsResult가 배열이고 doorMarkersHtml 속성을 가지고 있는지 확인
+      if (doorsResult.length > 0 && doorsResult.doorMarkersHtml) {
+        console.log('🔥 dxfAnalyzer.js에서 생성된 문 마커 HTML 사용');
+        const svgEndIndex = finalSvgContent.lastIndexOf('</svg>');
+        if (svgEndIndex !== -1) {
+          const beforeLength = finalSvgContent.length;
+          finalSvgContent = finalSvgContent.slice(0, svgEndIndex) + doorsResult.doorMarkersHtml + finalSvgContent.slice(svgEndIndex);
+          const afterLength = finalSvgContent.length;
+          console.log(`🔥 dxfAnalyzer 문 마커 추가 완료: ${beforeLength} -> ${afterLength} (${afterLength - beforeLength} 바이트 추가)`);
+        }
+      } else {
+        console.log('🔥 doorMarkersHtml 속성이 없음. 문 마커 추가 건너뜀');
+      }
+    } catch (doorMarkerError) {
+      console.error('🔥 문 마커 추가 에러:', doorMarkerError.message);
+    }
+    console.log('🔥🔥🔥 === 강제 문 마커 추가 완료 ===');
+    
+    // resultsDir 정의
+    const resultsDir = path.join(__dirname, '..', 'results');
+    if (!fs.existsSync(resultsDir)) {
+      fs.mkdirSync(resultsDir, { recursive: true });
+    }
+    
+    const svgFilePath = path.join(resultsDir, `${jobId}.svg`);
+    fs.writeFileSync(svgFilePath, finalSvgContent, 'utf8');
+    
+    // SVG 파일 정보 생성
+    const svgFileInfo = {
+      filePath: svgFilePath,
+      fileName: `${jobId}.svg`,
+      fileSize: finalSvgContent.length,
+      fileSizeKB: Math.round(finalSvgContent.length / 1024 * 10) / 10
+    };
+    
+    console.log(`💾 SVG 파일 저장: ${svgFilePath}`);
+    console.log(`📊 SVG 파일 크기: ${svgFileInfo.fileSizeKB} KB`);
     
     // 9단계: 최종 응답 포맷팅
     logProcessingProgress('응답 포맷팅');

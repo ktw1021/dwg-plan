@@ -123,12 +123,32 @@ const formatTextInfo = (textAnalysis) => {
  * 문 정보 포맷팅
  */
 const formatDoorInfo = (doorAnalysis) => {
-  return doorAnalysis.map(door => ({
-    center: door.center,
-    radius: door.radius,
-    angle: door.angle,
-    layer: door.layer
-  }));
+  // 새로운 구조: { doors: [...], doorMarkersHtml: "...", length: N, 0: door, 1: door, ... }
+  if (doorAnalysis && doorAnalysis.doors && Array.isArray(doorAnalysis.doors)) {
+    return doorAnalysis.doors.map(door => ({
+      center: door.center,
+      radius: door.radius,
+      angle: door.angle,
+      layer: door.layer,
+      type: door.type,
+      confidence: door.confidence
+    }));
+  }
+  
+  // 기존 구조: 배열
+  if (Array.isArray(doorAnalysis)) {
+    return doorAnalysis.map(door => ({
+      center: door.center,
+      radius: door.radius,
+      angle: door.angle,
+      layer: door.layer,
+      type: door.type,
+      confidence: door.confidence
+    }));
+  }
+  
+  // 빈 배열 반환
+  return [];
 };
 
 /**
