@@ -8,13 +8,19 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const Job = require('../models/job');
-const dwgProcessor = require('../utils/dxfProcessor');
+const { processDxfFile } = require('../utils/processors/main');
 const jobService = require('../services/jobService');
 const { 
   createDwgUploadMiddleware, 
   handleUploadError, 
   validateUploadedFile 
 } = require('../middleware/uploadMiddleware');
+const {
+  DwgProcessError,
+  FileError,
+  MemoryError,
+  PerformanceError
+} = require('../utils/core/errors');
 
 const router = express.Router();
 
@@ -88,16 +94,56 @@ const processDwgFileAsync = async (jobId, filename, filePath, io) => {
     };
     
     // DWG 파일 처리 실행
-    const result = await dwgProcessor.processDwgFile(jobId, filename, filePath, progressCallback);
+    const result = await processDxfFile(jobId, filename, filePath, progressCallback);
     
     // 작업 완료 처리
     jobService.completeJob(jobId, result, io);
     
   } catch (error) {
-    console.error(`DWG 처리 오류 (${jobId}):`, error.message);
+    console.error(`DWG 처리 오류 (${jobId}):`, error);
     
+    let errorMessage = '도면 처리 중 오류가 발생했습니다.';
+    let errorDetails = {};
+    let progress = 50;
+
+    if (error instanceof DwgProcessError) {
+      switch (error.code) {
+        case 'FILE_ERROR':
+          errorMessage = '파일 처리 중 오류가 발생했습니다.';
+          progress = 10;
+          break;
+        case 'CONVERSION_ERROR':
+          errorMessage = 'DWG → DXF 변환 중 오류가 발생했습니다.';
+          progress = 20;
+          break;
+        case 'PARSING_ERROR':
+          errorMessage = 'DXF 파일 파싱 중 오류가 발생했습니다.';
+          progress = 30;
+          break;
+        case 'ANALYSIS_ERROR':
+          errorMessage = '도면 분석 중 오류가 발생했습니다.';
+          progress = 50;
+          break;
+        case 'RENDERING_ERROR':
+          errorMessage = 'SVG 생성 중 오류가 발생했습니다.';
+          progress = 85;
+          break;
+        case 'MEMORY_ERROR':
+          errorMessage = '메모리 부족으로 처리가 중단되었습니다.';
+          break;
+        case 'PERFORMANCE_ERROR':
+          errorMessage = '처리 시간이 너무 오래 걸려 중단되었습니다.';
+          break;
+      }
+      errorDetails = error.details;
+    }
+
     // 작업 오류 처리
-    jobService.handleJobError(jobId, error, io);
+    jobService.handleJobError(jobId, {
+      message: errorMessage,
+      details: errorDetails,
+      progress
+    }, io);
   }
 };
 

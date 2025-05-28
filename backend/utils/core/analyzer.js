@@ -2,6 +2,8 @@
  * 핵심 DXF 분석 모듈 - 모든 분석 기능 통합
  */
 
+const { detectDoors } = require('./doorDetector');
+
 // 구조 분석
 const analyzeStructure = (helper) => {
   const bbox = helper.toPolylines().bbox;
@@ -62,13 +64,30 @@ const analyzeTexts = (helper) => {
         } else if (entity.x !== undefined && entity.y !== undefined) {
           position = { x: entity.x, y: entity.y };
         }
+
+        // 중요 정보만 로깅
+        if (process.env.DEBUG) {
+          console.log(`\n=== 텍스트 엔티티: "${foundText}" ===`);
+          console.log('위치:', position);
+          console.log('크기:', {
+            width: entity.horizontalWidth,
+            height: entity.verticalHeight || entity.nominalTextHeight
+          });
+          console.log('정렬:', {
+            attachmentPoint: entity.groupCodes?.[71],
+            horizontalMode: entity.groupCodes?.[72],
+            verticalMode: entity.groupCodes?.[73]
+          });
+          console.log('================================\n');
+        }
         
         foundTexts.push({
           text: foundText,
           position,
           layer: entity.layer || '기본',
           entityType: type,
-          index
+          index,
+          _entityRef: entity
         });
       }
     }
@@ -138,10 +157,50 @@ const performAnalysis = (helper) => {
   return { structure, arcs, texts };
 };
 
+/**
+ * 종합 분석 실행 (기존 호환성 유지)
+ */
+const performComprehensiveAnalysis = (helper) => {
+  try {
+    const analysis = performAnalysis(helper);
+    const doors = detectDoors(helper);
+    
+    return {
+      structure: {
+        ...analysis.structure,
+        polylinesData: { bbox: analysis.structure.bbox } // 기존 호환성
+      },
+      arcs: analysis.arcs,
+      texts: analysis.texts,
+      doors: doors
+    };
+  } catch (error) {
+    throw error;
+  }
+};
+
+// 기존 함수명과의 호환성을 위한 별칭들
+const analyzeDxfStructure = (helper) => {
+  const result = analyzeStructure(helper);
+  return {
+    ...result,
+    polylinesData: { bbox: result.bbox } // 기존 호환성
+  };
+};
+
+const analyzeArcEntities = analyzeArcs;
+const analyzeTextEntities = analyzeTexts;
+
 module.exports = {
+  // 핵심 함수들
   performAnalysis,
   analyzeStructure,
   analyzeArcs,
   analyzeTexts,
-  filterEntities
+  filterEntities,
+  // 호환성 함수들
+  performComprehensiveAnalysis,
+  analyzeDxfStructure,
+  analyzeArcEntities,
+  analyzeTextEntities
 }; 
