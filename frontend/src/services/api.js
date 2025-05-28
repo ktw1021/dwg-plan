@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 const api = axios.create({
   baseURL: API_URL,
@@ -58,7 +58,7 @@ export const uploadFloorplan = async (file, onUploadProgress) => {
     fileType: file.type
   });
 
-  const response = await api.post('/dwg/upload', formData, {
+  const response = await api.post('/api/dwg/upload', formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
@@ -76,7 +76,7 @@ export const uploadFloorplan = async (file, onUploadProgress) => {
 };
 
 export const getFloorplanResult = async (jobId) => {
-  const response = await api.get(`/dwg/status/${jobId}`);
+  const response = await api.get(`/api/dwg/status/${jobId}`);
   return response.data;
 };
 
