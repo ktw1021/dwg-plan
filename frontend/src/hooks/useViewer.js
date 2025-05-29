@@ -100,7 +100,7 @@ export const useViewer = (result) => {
     setContentType(fileType);
     
     if (fileType === 'svg') {
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+      const apiUrl = process.env.REACT_APP_API_URL;
       
       fetch(`${apiUrl}${result.imageUrl}`)
         .then(response => response.text())

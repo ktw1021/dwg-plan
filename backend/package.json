@@ -13,7 +13,6 @@
   "license": "ISC",
   "dependencies": {
     "@dxfjs/parser": "^0.3.2",
-    "@mlightcad/libredwg-web": "^0.1.5",
     "canvas": "^2.11.2",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",

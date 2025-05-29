@@ -6,6 +6,7 @@ const fs = require('fs');
 const { Helper } = require('dxf');
 const path = require('path');
 const {
+  DwgProcessError,
   FileError,
   ConversionError,
   ParsingError,

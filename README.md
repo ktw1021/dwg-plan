@@ -12,6 +12,8 @@ CAD 도면 파일을 브라우저에서 바로 확인하고, 줌/팬 기능으�
 - **실시간 변환 상태** - Socket.IO 기반 진행 상황 표시  
 - **인터랙티브 뷰어** - 마우스 휠 줌, 드래그 팬 기능
 - **SVG 다운로드** - 변환된 도면 파일 저장
+- **메모리 관리** - 90% of 1GB 제한으로 안정적 운영
+- **성능 모니터링** - 처리 시간 제한 (30초) 및 메트릭 수집
 
 ### 🛠 기술 스택
 
@@ -26,14 +28,18 @@ Backend (Node.js):
 Frontend (React):
 ├── React - 사용자 인터페이스
 ├── Socket.IO Client - 실시간 통신
+├── Custom Hooks - 뷰어 상태 관리
 └── CSS Transform - SVG 뷰어 줌/팬
 ```
 
 ### 🔄 변환 프로세스
 
 ```
-DWG 파일 업로드 → ODA File Converter → DXF 변환 → 
-DXF 파싱 → SVG 생성 → 웹 뷰어 렌더링
+1. DWG 파일 업로드
+2. ODA File Converter로 DXF 변환
+3. DXF 파일 파싱 및 분석
+4. SVG 생성 및 최적화
+5. 웹 뷰어 렌더링
 ```
 
 ---
@@ -44,6 +50,7 @@ DXF 파싱 → SVG 생성 → 웹 뷰어 렌더링
 - **Node.js** 14.x 이상
 - **npm** 또는 yarn
 - **[ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter)** (필수)
+- **메모리** 최소 2GB 권장
 
 ### 📥 설치 과정
 
@@ -106,11 +113,13 @@ DXF 파싱 → SVG 생성 → 웹 뷰어 렌더링
 PORT=5000
 FRONTEND_URL=http://localhost:3000
 
-# ODA File Converter 경로(예)
+# ODA File Converter 경로
 ODA_CONVERTER_PATH=C:\Program Files\ODA\ODAFileConverter\ODAFileConverter.exe
 
-# 파일 업로드 제한 (선택사항)
+# 파일 업로드 제한
 MAX_FILE_SIZE=10485760  # 10MB
+MEMORY_LIMIT=1073741824 # 1GB
+PROCESSING_TIMEOUT=30000 # 30초
 ```
 
 ---
@@ -122,19 +131,35 @@ dwg-plan/
 ├── backend/                 # Express 서버
 │   ├── server.js           # 메인 서버 파일
 │   ├── routes/             # API 라우트
-│   │   ├── dwgRoutes.js   # DWG 관련 API
-│   │   └── floorplanRoutes.js
 │   ├── controllers/        # 비즈니스 로직
-│   ├── utils/             # 유틸리티 함수
-│   ├── uploads/           # 업로드된 DWG 파일 (gitignore)
-│   ├── results/           # 변환된 SVG 파일 (gitignore)
-│   └── package.json       # 백엔드 의존성
-├── frontend/               # React 앱
+│   ├── utils/             
+│   │   ├── core/          # 핵심 유틸리티
+│   │   │   ├── errors.js    # 에러 클래스
+│   │   │   ├── analyzer.js  # 도면 분석기
+│   │   │   └── doorDetector.js # 문 검출기
+│   │   ├── processors/    # 파일 처리
+│   │   │   ├── main.js      # 메인 처리 로직
+│   │   │   └── dwgConverter.js # DWG 변환기
+│   │   └── renderers/     # 렌더링
+│   │       └── svg.js       # SVG 렌더러
+│   ├── uploads/           # 업로드된 파일
+│   ├── results/           # 변환 결과
+│   └── temp/             # 임시 파일
+│
+├── frontend/              # React 앱
 │   ├── src/
-│   │   ├── components/
-│   │   │   └── ResultViewer.js  # SVG 뷰어 컴포넌트
-│   │   └── App.js
-│   └── package.json       # 프론트엔드 의존성
+│   │   ├── components/   # UI 컴포넌트
+│   │   │   ├── FileUpload.js
+│   │   │   ├── ProgressTracker.js
+│   │   │   ├── ResultViewer.js
+│   │   │   └── SVGViewer.js
+│   │   ├── hooks/       # 커스텀 훅
+│   │   │   ├── useViewer.js
+│   │   │   └── useFileUpload.js
+│   │   ├── context/     # 컨텍스트
+│   │   ├── utils/       # 유틸리티
+│   │   └── App.js       # 메인 앱
+│   └── public/          # 정적 파일
 └── README.md
 ```
 
@@ -152,6 +177,37 @@ dwg-plan/
 - `join` - 특정 작업 ID 방에 참여
 - `progress` - 변환 진행 상황 업데이트
 - `complete` - 변환 완료 알림
+- `error` - 오류 발생 알림
+
+---
+
+## 🔍 주요 특징
+
+### 인터랙티브 SVG 뷰어
+- **마우스 휠 줌:** 포인터 위치 기준 확대/축소 (0.1x ~ 10x)
+- **드래그 팬:** 클릭 드래그로 도면 이동
+- **스크롤 격리:** SVG 영역에서만 휠 이벤트 처리
+- **상태 유지:** 줌/팬 상태 완벽 보존
+
+### 실시간 상태 업데이트
+- Socket.IO 기반 양방향 통신
+- 단계별 진행률 실시간 표시
+- 오류 상황 즉시 알림
+
+### 안정적인 파일 처리
+- 10MB 파일 크기 제한
+- 1GB 메모리 사용량 제한
+- 30초 처리 시간 제한
+- 상세한 에러 메시지와 컨텍스트 제공
+
+### 에러 처리
+- **FileError** - 파일 관련 오류
+- **ConversionError** - 변환 과정 오류
+- **ParsingError** - 파싱 관련 오류
+- **AnalysisError** - 분석 과정 오류
+- **RenderingError** - 렌더링 오류
+- **MemoryError** - 메모리 초과 오류
+- **PerformanceError** - 처리 시간 초과 오류
 
 ---
 
@@ -174,46 +230,26 @@ dwg-plan/
 ODAFileConverter "inputDir" "outputDir" "ACAD2018" "DXF" "0" "1"
 ```
 
+### 메모리 사용량 초과
+**문제:** `Memory limit exceeded`  
+**해결:** 
+- 더 작은 파일 사용
+- 메모리 제한 증가 (환경 변수 수정)
+- 임시 파일 정리 확인
+
+### 처리 시간 초과
+**문제:** `Processing timeout`  
+**해결:**
+- 더 작은 파일 사용
+- 타임아웃 제한 증가
+- 서버 리소스 확인
+
 ### 포트 충돌
 **문제:** `포트 5000이 이미 사용 중`  
 **해결:** `.env` 파일에서 다른 포트 설정:
 ```env
 PORT=5001
 ```
-
----
-
-## 🔍 주요 특징
-
-### 인터랙티브 SVG 뷰어
-- **마우스 휠 줌:** 포인터 위치 기준 확대/축소
-- **드래그 팬:** 클릭 드래그로 도면 이동
-- **스크롤 격리:** SVG 영역에서만 휠 이벤트 처리
-- **상태 유지:** 줌/팬 상태 완벽 보존
-
-### 실시간 상태 업데이트
-- Socket.IO 기반 양방향 통신
-- 변환 진행률 실시간 표시
-- 오류 상황 즉시 알림
-
-### 안정적인 파일 처리
-- 10MB 파일 크기 제한
-- UUID 기반 작업 ID
-- 임시 파일 자동 정리
-
----
-
-## 📄 라이선스
-
-MIT License
-
-## 👥 기여하기
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
 
 ---
 

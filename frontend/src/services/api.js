@@ -1,9 +1,9 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -48,31 +48,26 @@ api.interceptors.response.use(
   }
 );
 
-export const uploadFloorplan = async (file, onUploadProgress) => {
+export const uploadFloorplan = async (file, onProgress) => {
   const formData = new FormData();
   formData.append('file', file);
 
-  console.log('업로드 요청 준비:', {
-    fileName: file.name,
-    fileSize: file.size,
-    fileType: file.type
-  });
+  try {
+    const response = await axios.post(`${API_BASE_URL}/api/dwg/upload`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        onProgress(percentCompleted);
+      },
+    });
 
-  const response = await api.post('/api/dwg/upload', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-    onUploadProgress: (progressEvent) => {
-      const percentCompleted = Math.round(
-        (progressEvent.loaded * 100) / progressEvent.total
-      );
-      if (onUploadProgress) {
-        onUploadProgress(percentCompleted);
-      }
-    },
-  });
-
-  return response.data;
+    return response.data;
+  } catch (error) {
+    console.error('Upload error:', error);
+    throw error;
+  }
 };
 
 export const getFloorplanResult = async (jobId) => {

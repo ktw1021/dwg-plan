@@ -81,20 +81,7 @@ const convertDwgToDxf = async (dwgFilePath) => {
     });
     
   } catch (error) {
-    // ODA 실패 시 libredwg-web으로 fallback
-    try {
-      const { libredwgjs } = require('@mlightcad/libredwg-web');
-      const dwgBuffer = fs.readFileSync(dwgFilePath);
-      const result = await libredwgjs(dwgBuffer, 'dxf');
-      
-      if (result && result.content) {
-        return result.content;
-      } else {
-        throw new Error('libredwg-web 변환 결과가 비어있습니다.');
-      }
-    } catch (fallbackError) {
-      throw new Error(`DWG 파일 변환에 실패했습니다. DXF 파일로 변환하여 업로드해주세요. (ODA 오류: ${error.message}, Fallback 오류: ${fallbackError.message})`);
-    }
+    throw new Error(`DWG 파일 변환에 실패했습니다. DXF 파일로 변환하여 업로드해주세요. (ODA 오류: ${error.message})`);
   }
 };
 

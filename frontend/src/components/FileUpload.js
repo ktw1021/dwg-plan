@@ -1,17 +1,20 @@
-import React, { useRef } from 'react';
-import { useFileUpload } from '../hooks/useFileUpload';
-import { getFileTypeInfo } from '../utils/fileUtils';
+import React from 'react';
 import styles from '../styles/common.module.css';
 import uploadIcon from '../assets/step1_cloud_upload.webp';
+import { getFileTypeInfo } from '../utils/fileUtils';
 
-const FileUpload = ({ onUploadSuccess }) => {
-  const fileInputRef = useRef(null);
-  const { file, progress, error, isUploading, handleFileSelect, uploadFile } = useFileUpload(onUploadSuccess);
-
+const FileUpload = ({ 
+  onFileSelect,
+  file = null,
+  error = null,
+  isUploading = false,
+  progress = 0,
+  onUpload
+}) => {
   const handleDrop = (e) => {
     e.preventDefault();
     if (e.dataTransfer.files?.length > 0) {
-      handleFileSelect(e.dataTransfer.files[0]);
+      onFileSelect(e.dataTransfer.files[0]);
     }
   };
 
@@ -19,28 +22,10 @@ const FileUpload = ({ onUploadSuccess }) => {
     e.preventDefault();
   };
 
-  const handleBrowseClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (e) => {
-    if (e.target.files?.[0]) {
-      handleFileSelect(e.target.files[0]);
-    }
-  };
-
   return (
-    <div className={styles.container}>
-      <div className={styles.header}>
-        <h2 className={styles.title}>
-          자, 이제 우리 오피스를 만들어볼까요?<br/>
-          가구, 집기들도 모두 포함된 완성형 공간이 준비되어 있습니다
-        </h2>
-      </div>
-      
-      <div className={styles.divider} />
-      
+    <div className={styles.uploadContainer}>
       <div 
+        className={styles.dropzone}
         style={{
           border: '2px dashed #ddd',
           borderRadius: '12px',
@@ -52,7 +37,7 @@ const FileUpload = ({ onUploadSuccess }) => {
         }}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
-        onClick={handleBrowseClick}
+        onClick={() => document.getElementById('fileInput').click()}
       >
         <div style={{ marginBottom: '20px' }}>
           <img src={uploadIcon} alt="Upload" style={{ width: '60px', height: '60px' }} />
@@ -82,28 +67,38 @@ const FileUpload = ({ onUploadSuccess }) => {
         )}
         
         <input 
+          id="fileInput"
           type="file" 
-          ref={fileInputRef}
-          onChange={handleFileChange}
+          onChange={(e) => {
+            if (e.target.files?.[0]) {
+              onFileSelect(e.target.files[0]);
+            }
+          }}
           accept=".dwg,.jpg,.jpeg,.png,.pdf"
           style={{ display: 'none' }}
         />
       </div>
       
-      <div className={styles.divider} />
-      
-      {error && <div className={styles.error}>{error}</div>}
+      {error && (
+        <div className={styles.error} style={{ textAlign: 'center', marginTop: '20px' }}>
+          {error}
+        </div>
+      )}
       
       {file && !isUploading && (
-        <div style={{ textAlign: 'center' }}>
-          <button className={styles.button} onClick={uploadFile}>
+        <div style={{ textAlign: 'center', marginTop: '20px' }}>
+          <button 
+            className={styles.button} 
+            onClick={onUpload}
+            disabled={isUploading}
+          >
             분석 시작하기
           </button>
         </div>
       )}
       
       {isUploading && (
-        <div style={{ textAlign: 'center' }}>
+        <div style={{ textAlign: 'center', marginTop: '20px' }}>
           <div className={styles.progressBar}>
             <div className={styles.progressFill} style={{ width: `${progress}%` }} />
           </div>
