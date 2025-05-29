@@ -40,46 +40,26 @@ export const useFileUpload = (onUploadSuccess) => {
     if (!file) return;
     
     try {
-      console.log('파일 업로드 시작:', {
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: file.type
-      });
-      
       setIsUploading(true);
       const response = await uploadFloorplan(file, setProgress);
       
-      console.log('업로드 응답:', response);
-      
       if (response?.jobId) {
-        console.log('업로드 성공, jobId:', response.jobId);
         onUploadSuccess(response.jobId);
       } else {
-        console.error('응답에 jobId가 없습니다:', response);
         setError('서버 응답이 올바르지 않습니다.');
         setIsUploading(false);
       }
     } catch (error) {
-      console.error('Upload error details:', {
-        message: error.message,
-        response: error.response,
-        request: error.request,
-        config: error.config
-      });
-      
       let errorMessage = '파일 업로드 중 오류가 발생했습니다.';
       
       if (error.response) {
         // 서버에서 오류 응답을 받은 경우
-        console.error('서버 오류 응답:', error.response.data);
         errorMessage = error.response.data?.message || `서버 오류 (${error.response.status})`;
       } else if (error.request) {
         // 요청은 보냈지만 응답을 받지 못한 경우
-        console.error('네트워크 오류 - 응답 없음:', error.request);
         errorMessage = '서버에 연결할 수 없습니다. 네트워크 연결을 확인해주세요.';
       } else {
         // 요청 설정 중 오류가 발생한 경우
-        console.error('요청 설정 오류:', error.message);
         errorMessage = error.message;
       }
       

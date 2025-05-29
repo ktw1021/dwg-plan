@@ -64,22 +64,6 @@ const analyzeTexts = (helper) => {
         } else if (entity.x !== undefined && entity.y !== undefined) {
           position = { x: entity.x, y: entity.y };
         }
-
-        // 중요 정보만 로깅
-        if (process.env.DEBUG) {
-          console.log(`\n=== 텍스트 엔티티: "${foundText}" ===`);
-          console.log('위치:', position);
-          console.log('크기:', {
-            width: entity.horizontalWidth,
-            height: entity.verticalHeight || entity.nominalTextHeight
-          });
-          console.log('정렬:', {
-            attachmentPoint: entity.groupCodes?.[71],
-            horizontalMode: entity.groupCodes?.[72],
-            verticalMode: entity.groupCodes?.[73]
-          });
-          console.log('================================\n');
-        }
         
         foundTexts.push({
           text: foundText,

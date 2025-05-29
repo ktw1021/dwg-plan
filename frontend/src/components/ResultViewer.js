@@ -25,16 +25,6 @@ const ResultViewer = ({
 }) => {
   const [isDarkMode, setIsDarkMode] = useState(false);
 
-  useEffect(() => {
-    console.log('ResultViewer: Props update', {
-      contentType,
-      hasSvgContent: !!svgContent,
-      isLoading,
-      hasError: !!error,
-      contentStart: svgContent?.substring(0, 50)
-    });
-  }, [contentType, svgContent, isLoading, error]);
-
   const viewerStyle = {
     cursor: isDragging ? 'grabbing' : 'grab',
     width: '100%',
@@ -57,15 +47,6 @@ const ResultViewer = ({
   };
 
   const renderContent = () => {
-    console.log('ResultViewer: Rendering content', {
-      isLoading,
-      hasError: !!error,
-      hasSvgContent: !!svgContent,
-      svgContentLength: svgContent?.length,
-      svgContentStart: svgContent?.substring(0, 100),
-      contentType
-    });
-
     if (isLoading) {
       return (
         <div style={{ textAlign: 'center', padding: '40px' }}>
@@ -75,7 +56,6 @@ const ResultViewer = ({
     }
 
     if (error) {
-      console.error('ResultViewer: Error rendering content:', error);
       return (
         <div style={{ textAlign: 'center', padding: '40px' }}>
           <p style={{ color: '#dc3545', marginBottom: '10px' }}>도면을 불러오는데 실패했습니다</p>
@@ -85,7 +65,6 @@ const ResultViewer = ({
     }
 
     if (!svgContent) {
-      console.warn('ResultViewer: No SVG content available');
       return (
         <div style={{ textAlign: 'center', padding: '40px' }}>
           <p>도면 데이터가 없습니다</p>
@@ -93,19 +72,31 @@ const ResultViewer = ({
       );
     }
 
-    console.log('ResultViewer: Attempting to render SVG content');
     return (
       <div 
-        dangerouslySetInnerHTML={{ __html: svgContent }} 
-        style={contentStyle}
-        onLoad={() => {
-          console.log('ResultViewer: SVG content loaded successfully');
-          setSvgLoaded(true);
+        className="svg-container"
+        style={{
+          ...contentStyle,
+          width: '100%',
+          height: '100%',
+          position: 'absolute',
+          top: 0,
+          left: 0
         }}
-        onError={(e) => {
-          console.error('ResultViewer: SVG rendering error:', e);
-        }}
-      />
+      >
+        <div
+          dangerouslySetInnerHTML={{ __html: svgContent }} 
+          style={{
+            width: '100%',
+            height: '100%'
+          }}
+          onLoad={() => {
+            setSvgLoaded(true);
+          }}
+          onError={(e) => {
+          }}
+        />
+      </div>
     );
   };
 

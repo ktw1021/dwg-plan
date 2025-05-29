@@ -149,15 +149,15 @@ graph LR
 
 ### 4. 의존성 설치
 
-```bash
+   ```bash
 # Backend
-cd backend
-npm install
-
+   cd backend
+   npm install
+   
 # Frontend
 cd frontend
-npm install
-```
+   npm install
+   ```
 
 ### 5. 실행
 

@@ -29,7 +29,7 @@ export const useProgress = (jobId, onComplete) => {
           setError(response.message || '분석 중 오류가 발생했습니다.');
         }
       } catch (error) {
-        console.error('상태 확인 중 오류:', error);
+        setError(error.message || '상태 확인 중 오류가 발생했습니다.');
       }
     };
 
@@ -43,7 +43,6 @@ export const useProgress = (jobId, onComplete) => {
   useEffect(() => {
     if (!socket || !jobId) return;
 
-    console.log('Joining room for job:', jobId);
     socket.emit('join', { jobId });
 
     const handleProgress = (data) => {
@@ -59,7 +58,7 @@ export const useProgress = (jobId, onComplete) => {
               }
             })
             .catch(error => {
-              console.error('결과 확인 중 오류:', error);
+              setError(error.message || '결과 확인 중 오류가 발생했습니다.');
             });
         }
       }

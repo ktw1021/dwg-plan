@@ -30,11 +30,9 @@ export const useViewer = (result) => {
   const pollSvgContent = useCallback(async (jobId) => {
     try {
       const response = await api.get(`/api/dwg/svg/${jobId}`);
-      console.log('useViewer: Polling response', response.data);
 
       if (response.data.success) {
         if (response.data.status === 'done' && response.data.svgContent) {
-          console.log('useViewer: SVG content received');
           setSvgContent(response.data.svgContent);
           setContentType('svg');
           setIsLoading(false);
@@ -50,7 +48,6 @@ export const useViewer = (result) => {
         throw new Error(response.data.message || '도면 데이터를 불러오는데 실패했습니다.');
       }
     } catch (error) {
-      console.error('useViewer: Polling error', error);
       setError(error.message);
       setIsLoading(false);
       
@@ -65,11 +62,8 @@ export const useViewer = (result) => {
   // 폴링 시작
   useEffect(() => {
     if (!result?.jobId) {
-      console.log('useViewer: No jobId available');
       return;
     }
-
-    console.log('useViewer: Starting polling', { jobId: result.jobId });
     
     // 상태 초기화
     setIsLoading(true);
@@ -88,7 +82,6 @@ export const useViewer = (result) => {
     return () => {
       // 정리: 폴링 중단
       if (pollingRef.current) {
-        console.log('useViewer: Cleaning up polling');
         clearInterval(pollingRef.current);
         pollingRef.current = null;
       }

@@ -19,8 +19,7 @@ const SocketContext = createContext(null);
 export const useSocket = () => {
   const socket = useContext(SocketContext);
   if (!socket) {
-    console.warn('Socket context not available');
-    return null;
+    throw new Error('Socket context must be used within a SocketProvider');
   }
   return socket;
 };
@@ -38,14 +37,6 @@ export const SocketProvider = ({ children }) => {
       reconnection: true,
       reconnectionAttempts: 5,
       timeout: 10000
-    });
-
-    newSocket.on('connect', () => {
-      console.log('Socket connected:', newSocket.id);
-    });
-
-    newSocket.on('connect_error', (error) => {
-      console.error('Socket connection error:', error);
     });
 
     setSocket(newSocket);

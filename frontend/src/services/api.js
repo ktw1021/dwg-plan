@@ -19,17 +19,9 @@ const api = axios.create({
 // 요청 인터셉터 추가
 api.interceptors.request.use(
   (config) => {
-    console.log('API 요청:', {
-      method: config.method,
-      url: config.url,
-      baseURL: config.baseURL,
-      fullURL: `${config.baseURL}${config.url}`,
-      headers: config.headers
-    });
     return config;
   },
   (error) => {
-    console.error('API 요청 오류:', error);
     return Promise.reject(error);
   }
 );
@@ -37,20 +29,9 @@ api.interceptors.request.use(
 // 응답 인터셉터 추가
 api.interceptors.response.use(
   (response) => {
-    console.log('API 응답:', {
-      status: response.status,
-      data: response.data,
-      headers: response.headers
-    });
     return response;
   },
   (error) => {
-    console.error('API 응답 오류:', {
-      message: error.message,
-      response: error.response,
-      request: error.request,
-      config: error.config
-    });
     return Promise.reject(error);
   }
 );
@@ -78,7 +59,6 @@ export const uploadFloorplan = async (file, onProgress) => {
 
     return response.data;
   } catch (error) {
-    console.error('Upload error:', error);
     throw error;
   }
 };

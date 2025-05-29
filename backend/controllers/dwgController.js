@@ -254,7 +254,6 @@ const getAllJobs = (req, res) => {
     });
     
   } catch (error) {
-    console.error('작업 목록 조회 오류:', error);
     res.status(500).json({ 
       success: false, 
       message: '작업 목록 조회 중 오류가 발생했습니다.' 
@@ -281,14 +280,12 @@ const deleteJob = (req, res) => {
     // 작업 삭제
     Job.deleteJob(jobId);
     
-    console.log(`작업 삭제됨: ${jobId}`);
     res.status(200).json({ 
       success: true, 
       message: '작업이 삭제되었습니다.' 
     });
     
   } catch (error) {
-    console.error('작업 삭제 오류:', error);
     res.status(500).json({ 
       success: false, 
       message: '작업 삭제 중 오류가 발생했습니다.' 
@@ -312,7 +309,6 @@ const cleanupExpiredJobs = (req, res) => {
     });
     
   } catch (error) {
-    console.error('작업 정리 오류:', error);
     res.status(500).json({ 
       success: false, 
       message: '작업 정리 중 오류가 발생했습니다.' 

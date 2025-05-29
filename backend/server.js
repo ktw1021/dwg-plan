@@ -52,7 +52,6 @@ const jobsDir = path.join(__dirname, 'jobs');
 [uploadsDir, resultsDir, jobsDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
-    logger.info(`디렉토리 생성: ${dir}`);
   }
 });
 

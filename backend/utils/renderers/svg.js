@@ -107,42 +107,8 @@ const addRoomLabels = (svgContent, texts) => {
     roomCandidates.forEach((roomText) => {
       const entity = roomText._entityRef;
       
-      // 엔티티 전체 속성 로깅 (중복 제거)
-      const entityKey = `${entity.handle}_${entity.type}`;
-      if (!global.loggedEntities) global.loggedEntities = new Set();
-      
-      if (!global.loggedEntities.has(entityKey)) {
-        console.log(`\n=== 텍스트 엔티티 상세 정보 ===`);
-        console.log('텍스트:', roomText.text);
-        console.log('엔티티 타입:', entity.type);
-        console.log('\n전체 속성:');
-        Object.keys(entity).forEach(key => {
-          console.log(`${key}:`, entity[key]);
-        });
-        console.log('================================\n');
-        
-        global.loggedEntities.add(entityKey);
-      }
-
       // MTEXT 좌표 및 속성 계산
       const { x, y, w, h, ap, col, row } = getMTextXY(entity);
-
-      // 디버깅용 로그
-      console.log(`\n=== MTEXT 위치 계산 ===`);
-      console.log('텍스트:', roomText.text);
-      console.log('정렬 모드:', {
-        horizontal: entity.groupCodes?.[72] ?? 0,
-        vertical: entity.groupCodes?.[73] ?? 0
-      });
-      console.log('삽입점 후보:', {
-        'primary': { x: entity.groupCodes?.[10], y: entity.groupCodes?.[20] },
-        'secondary': { x: entity.groupCodes?.[11], y: entity.groupCodes?.[21] },
-        'xAxis': { x: entity.xAxisX, y: entity.xAxisY }
-      });
-      console.log('선택된 좌표:', { x, y });
-      console.log('박스 크기:', { w, h });
-      console.log('Attachment:', { point: ap, col, row });
-      console.log('========================\n');
       
       // 초기 폰트 크기를 크게 설정 (자동 조절됨)
       const fontSize = 100;
@@ -246,7 +212,6 @@ const renderSvg = (helper, analysis, doors) => {
     return svgContent;
     
   } catch (error) {
-    console.error('SVG 렌더링 실패:', error.message);
     return helper.toSVG(); // fallback
   }
 };
