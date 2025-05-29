@@ -1,13 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../services/api';
 
+// 상수 정의
 const ZOOM_FACTOR = 1.2;
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 10;
 const WHEEL_ZOOM_FACTOR = 0.1;
 const POLLING_INTERVAL = 1000; // 1초마다 폴링
 
+/**
+ * SVG 뷰어 훅
+ * @param {Object} result - 초기 결과 데이터
+ * @returns {Object} 뷰어 상태 및 제어 함수들
+ */
 export const useViewer = (result) => {
+  // 상태 관리
   const [contentType, setContentType] = useState('svg');
   const [svgContent, setSvgContent] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -88,26 +95,41 @@ export const useViewer = (result) => {
     };
   }, [result?.jobId, pollSvgContent]);
 
+  /**
+   * Transform 초기화
+   */
   const resetTransform = useCallback(() => {
     setScale(1);
     setPanX(0);
     setPanY(0);
   }, []);
 
+  /**
+   * 확대
+   */
   const handleZoomIn = useCallback(() => {
     setScale(prev => Math.min(prev * ZOOM_FACTOR, MAX_SCALE));
   }, []);
 
+  /**
+   * 축소
+   */
   const handleZoomOut = useCallback(() => {
     setScale(prev => Math.max(prev / ZOOM_FACTOR, MIN_SCALE));
   }, []);
 
+  /**
+   * 마우스 드래그 시작
+   */
   const handleMouseDown = useCallback((e) => {
     setIsDragging(true);
     setDragStart({ x: e.clientX, y: e.clientY });
     e.preventDefault();
   }, []);
 
+  /**
+   * 마우스 드래그 중
+   */
   const handleMouseMove = useCallback((e) => {
     if (!isDragging || !svgLoaded) return;
     
@@ -120,10 +142,16 @@ export const useViewer = (result) => {
     setDragStart({ x: e.clientX, y: e.clientY });
   }, [isDragging, svgLoaded, dragStart]);
 
+  /**
+   * 마우스 드래그 종료
+   */
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
   }, []);
 
+  /**
+   * 마우스 휠 확대/축소
+   */
   const handleWheel = useCallback((e) => {
     e.preventDefault();
     if (!svgLoaded) return;
