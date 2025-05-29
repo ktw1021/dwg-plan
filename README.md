@@ -106,7 +106,7 @@ DXF 파싱 → SVG 생성 → 웹 뷰어 렌더링
 PORT=5000
 FRONTEND_URL=http://localhost:3000
 
-# ODA File Converter 경로
+# ODA File Converter 경로(예)
 ODA_CONVERTER_PATH=C:\Program Files\ODA\ODAFileConverter\ODAFileConverter.exe
 
 # 파일 업로드 제한 (선택사항)
