@@ -25,6 +25,13 @@ const ResultViewer = ({
 }) => {
   const [isDarkMode, setIsDarkMode] = useState(false);
 
+  useEffect(() => {
+    // 뷰어 상태 변경 시 SVG 로딩 상태 업데이트
+    if (svgContent && viewerRef.current) {
+      setSvgLoaded(true);
+    }
+  }, [contentType, svgContent, isLoading, error]);
+
   const viewerStyle = {
     cursor: isDragging ? 'grabbing' : 'grab',
     width: '100%',
@@ -90,11 +97,8 @@ const ResultViewer = ({
             width: '100%',
             height: '100%'
           }}
-          onLoad={() => {
-            setSvgLoaded(true);
-          }}
-          onError={(e) => {
-          }}
+          onLoad={() => setSvgLoaded(true)}
+          onError={() => setSvgLoaded(false)}
         />
       </div>
     );

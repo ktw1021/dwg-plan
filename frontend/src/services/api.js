@@ -8,7 +8,9 @@ import axios from 'axios';
 // API 기본 URL 설정
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
-// axios 인스턴스 생성 및 기본 설정
+/**
+ * axios 인스턴스 생성 및 기본 설정
+ */
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -16,9 +18,10 @@ const api = axios.create({
   },
 });
 
-// 요청 인터셉터 추가
+// 요청 인터셉터
 api.interceptors.request.use(
   (config) => {
+    // 요청 전처리 로직 추가 가능
     return config;
   },
   (error) => {
@@ -26,12 +29,13 @@ api.interceptors.request.use(
   }
 );
 
-// 응답 인터셉터 추가
+// 응답 인터셉터
 api.interceptors.response.use(
   (response) => {
     return response;
   },
   (error) => {
+    // 에러 처리 로직 추가 가능
     return Promise.reject(error);
   }
 );
@@ -59,7 +63,7 @@ export const uploadFloorplan = async (file, onProgress) => {
 
     return response.data;
   } catch (error) {
-    throw error;
+    throw new Error(error.response?.data?.message || '파일 업로드 중 오류가 발생했습니다.');
   }
 };
 
@@ -69,8 +73,12 @@ export const uploadFloorplan = async (file, onProgress) => {
  * @returns {Promise} 작업 상태 정보
  */
 export const getJobStatus = async (jobId) => {
-  const response = await api.get(`/api/dwg/status/${jobId}`);
-  return response.data;
+  try {
+    const response = await api.get(`/api/dwg/status/${jobId}`);
+    return response.data;
+  } catch (error) {
+    throw new Error(error.response?.data?.message || '작업 상태 조회 중 오류가 발생했습니다.');
+  }
 };
 
 export default api;
