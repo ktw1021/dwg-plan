@@ -15,7 +15,6 @@ const { v4: uuidv4 } = require('uuid');
 const ensureUploadDir = (uploadPath) => {
   if (!fs.existsSync(uploadPath)) {
     fs.mkdirSync(uploadPath, { recursive: true });
-    console.log(`업로드 디렉토리 생성: ${uploadPath}`);
   }
   return uploadPath;
 };
@@ -33,14 +32,12 @@ const createDwgStorage = (uploadsDir) => {
       cb(null, uploadsDir);
     },
     filename: (req, file, cb) => {
-      // 고유한 작업 ID 생성
       const jobId = uuidv4();
-      req.jobId = jobId; // 요청 객체에 jobId 추가
+      req.jobId = jobId;
       
       const ext = path.extname(file.originalname);
       const filename = `${jobId}${ext}`;
       
-      console.log(`파일 저장: ${file.originalname} → ${filename}`);
       cb(null, filename);
     }
   });
@@ -57,11 +54,9 @@ const dwgFileFilter = (req, file, cb) => {
   const allowedExtensions = ['.dwg', '.dxf'];
   
   if (allowedExtensions.includes(ext)) {
-    console.log(`파일 형식 검증 통과: ${file.originalname} (${ext})`);
     cb(null, true);
   } else {
     const error = new Error(`지원하지 않는 파일 형식입니다. 허용된 형식: ${allowedExtensions.join(', ')}`);
-    console.warn(`파일 형식 검증 실패: ${file.originalname} (${ext})`);
     cb(error, false);
   }
 };
@@ -77,11 +72,9 @@ const multiFormatFileFilter = (req, file, cb) => {
   const allowedExtensions = ['.dwg', '.jpg', '.jpeg', '.png', '.pdf'];
   
   if (allowedExtensions.includes(ext)) {
-    console.log(`파일 형식 검증 통과: ${file.originalname} (${ext})`);
     cb(null, true);
   } else {
     const error = new Error(`지원하지 않는 파일 형식입니다. 허용된 형식: ${allowedExtensions.join(', ')}`);
-    console.warn(`파일 형식 검증 실패: ${file.originalname} (${ext})`);
     cb(error, false);
   }
 };
@@ -89,24 +82,18 @@ const multiFormatFileFilter = (req, file, cb) => {
 /**
  * DWG 파일 업로드 미들웨어 생성
  * @param {string} uploadsDir - 업로드 디렉토리 경로
- * @param {Object} options - 추가 옵션
- * @returns {Function} Multer 미들웨어
+ * @param {Object} options - 업로드 옵션
+ * @returns {Object} Multer 미들웨어
  */
 const createDwgUploadMiddleware = (uploadsDir, options = {}) => {
-  const {
-    maxFileSize = 10 * 1024 * 1024, // 기본 10MB
-    allowMultipleFormats = false
-  } = options;
-  
   const storage = createDwgStorage(uploadsDir);
-  const fileFilter = allowMultipleFormats ? multiFormatFileFilter : dwgFileFilter;
+  const fileFilter = options.allowMultipleFormats ? multiFormatFileFilter : dwgFileFilter;
   
   return multer({
     storage,
     fileFilter,
-    limits: { 
-      fileSize: maxFileSize,
-      files: 1 // 단일 파일만 허용
+    limits: {
+      fileSize: options.maxFileSize || 10 * 1024 * 1024 // 기본 10MB
     }
   });
 };
@@ -119,8 +106,6 @@ const createDwgUploadMiddleware = (uploadsDir, options = {}) => {
  * @param {Function} next - 다음 미들웨어 함수
  */
 const handleUploadError = (error, req, res, next) => {
-  console.error('파일 업로드 오류:', error.message);
-  
   if (error instanceof multer.MulterError) {
     switch (error.code) {
       case 'LIMIT_FILE_SIZE':
@@ -146,7 +131,6 @@ const handleUploadError = (error, req, res, next) => {
     }
   }
   
-  // 일반 오류 처리
   return res.status(400).json({
     success: false,
     message: error.message || '파일 업로드 중 오류가 발생했습니다.'
@@ -167,7 +151,6 @@ const validateUploadedFile = (req, res, next) => {
     });
   }
   
-  // 파일 크기 재검증
   if (req.file.size === 0) {
     return res.status(400).json({
       success: false,
@@ -175,7 +158,6 @@ const validateUploadedFile = (req, res, next) => {
     });
   }
   
-  console.log(`파일 업로드 완료: ${req.file.originalname} (${req.file.size} bytes)`);
   next();
 };
 

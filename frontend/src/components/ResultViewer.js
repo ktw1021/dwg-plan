@@ -1,74 +1,29 @@
-import React, { useCallback } from 'react';
-import { useViewer } from '../hooks';
-import { downloadFile, exportData } from '../utils';
+import React, { useEffect, useState } from 'react';
 import styles from '../styles/common.module.css';
 
-const ResultViewer = ({ result, onReset }) => {
-  const {
-    contentType,
-    svgContent,
-    isLoading,
-    scale,
-    panX,
-    panY,
-    isDragging,
-    viewerRef,
-    resetTransform,
-    handleZoomIn,
-    handleZoomOut,
-    handleMouseDown,
-    handleMouseMove,
-    handleMouseUp,
-    setSvgLoaded
-  } = useViewer(result);
-
-  const handleDownload = useCallback(() => {
-    if (!result?.imageUrl || !result?.jobId) return;
-    
-    const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
-    const ext = result.imageUrl.split('.').pop();
-    const filename = contentType === 'svg' ? `cad-visualization-${result.jobId}.svg` :
-                     contentType === 'image' ? `floor-plan-image-${result.jobId}.${ext}` :
-                     contentType === 'pdf' ? `floor-plan-pdf-${result.jobId}.${ext}` :
-                     `file-${result.jobId}.${ext}`;
-    
-    downloadFile(`${apiUrl}${result.imageUrl}`, filename);
-  }, [result, contentType]);
-  
-  const handleExport = useCallback(() => {
-    if (!result) return;
-    exportData(result, `cad-data-${result.jobId}.json`);
-  }, [result]);
-
-  if (!result?.imageUrl) {
-    return (
-      <div className={styles.container}>
-        <div className={styles.error}>
-          <h2>결과를 불러올 수 없습니다</h2>
-          <p>분석 결과가 없거나 오류가 발생했습니다. 다시 시도해주세요.</p>
-          <button className={styles.button} onClick={onReset}>새 파일 분석하기</button>
-        </div>
-      </div>
-    );
-  }
-
-  const getTitle = () => {
-    switch (contentType) {
-      case 'svg': return 'CAD 도면 시각화';
-      case 'image': return '도면 이미지 뷰어';
-      case 'pdf': return 'PDF 도면 뷰어';
-      default: return '파일 뷰어';
-    }
-  };
-
-  const getSubtitle = () => {
-    switch (contentType) {
-      case 'svg': return 'DWG 파일이 성공적으로 분석되어 상세한 도면으로 시각화되었습니다.';
-      case 'image': return '이미지 파일을 확대/축소하며 상세히 확인할 수 있습니다.';
-      case 'pdf': return 'PDF 파일을 확대/축소하며 상세히 확인할 수 있습니다.';
-      default: return '업로드된 파일을 확인할 수 있습니다.';
-    }
-  };
+const ResultViewer = ({
+  contentType,
+  svgContent,
+  isLoading,
+  error,
+  scale,
+  panX,
+  panY,
+  isDragging,
+  viewerRef,
+  handleZoomIn,
+  handleZoomOut,
+  resetTransform,
+  handleMouseDown,
+  handleMouseMove,
+  handleMouseUp,
+  setSvgLoaded,
+  result,
+  onDownload,
+  onExport,
+  onReset
+}) => {
+  const [isDarkMode, setIsDarkMode] = useState(false);
 
   const viewerStyle = {
     cursor: isDragging ? 'grabbing' : 'grab',
@@ -76,9 +31,10 @@ const ResultViewer = ({ result, onReset }) => {
     height: '700px',
     overflow: 'hidden',
     position: 'relative',
-    border: '1px solid #ddd',
+    border: !isDarkMode ? '1px solid #333' : '1px solid #fff',
     borderRadius: '8px',
-    background: '#f8f9fa'
+    background: !isDarkMode ? '#fff' : '#1a1a1a',
+    color: !isDarkMode ? '#000' : '#fff'
   };
 
   const contentStyle = {
@@ -86,64 +42,118 @@ const ResultViewer = ({ result, onReset }) => {
     height: '100%',
     userSelect: 'none',
     transform: `translate(${panX}px, ${panY}px) scale(${scale})`,
-    transformOrigin: '0 0'
+    transformOrigin: '0 0',
+    filter: isDarkMode ? 'invert(1) brightness(1.5) contrast(1.5)' : 'none'
+  };
+
+  const renderContent = () => {
+    if (isLoading) {
+      return (
+        <div style={{ textAlign: 'center', padding: '40px' }}>
+          <p>도면을 불러오는 중입니다...</p>
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div style={{ textAlign: 'center', padding: '40px' }}>
+          <p style={{ color: '#dc3545', marginBottom: '10px' }}>도면을 불러오는데 실패했습니다</p>
+          <p style={{ fontSize: '0.9em', color: '#6c757d' }}>{error}</p>
+        </div>
+      );
+    }
+
+    if (!svgContent) {
+      return (
+        <div style={{ textAlign: 'center', padding: '40px' }}>
+          <p>도면 데이터가 없습니다</p>
+        </div>
+      );
+    }
+
+    return (
+      <div 
+        className="svg-container"
+        style={{
+          ...contentStyle,
+          width: '100%',
+          height: '100%',
+          position: 'absolute',
+          top: 0,
+          left: 0
+        }}
+      >
+        <div
+          dangerouslySetInnerHTML={{ __html: svgContent }} 
+          style={{
+            width: '100%',
+            height: '100%'
+          }}
+          onLoad={() => {
+            setSvgLoaded(true);
+          }}
+          onError={(e) => {
+          }}
+        />
+      </div>
+    );
   };
 
   return (
-    <div className={styles.container}>
-      <div className={styles.header}>
-        <h2 className={styles.title}>{getTitle()}</h2>
-        <p className={styles.subtitle}>{getSubtitle()}</p>
-      </div>
-      
+    <div className={styles.viewerContainer}>
       <div style={{ marginBottom: '20px' }}>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '20px' }}>
-          <button onClick={handleZoomIn} className={styles.button}>확대 (+)</button>
-          <button onClick={handleZoomOut} className={styles.button}>축소 (-)</button>
-          <button onClick={resetTransform} className={styles.buttonSecondary}>원래 크기</button>
+          <button 
+            onClick={handleZoomIn}
+            className={styles.button}
+            disabled={isLoading || error}
+          >
+            확대 (+)
+          </button>
+          <button 
+            onClick={handleZoomOut}
+            className={styles.button}
+            disabled={isLoading || error}
+          >
+            축소 (-)
+          </button>
+          <button 
+            onClick={resetTransform}
+            className={styles.buttonSecondary}
+            disabled={isLoading || error}
+          >
+            초기화
+          </button>
+          <button 
+            onClick={() => setIsDarkMode(!isDarkMode)}
+            style={{
+              padding: '12px 24px',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '16px',
+              fontWeight: '500',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              background: isDarkMode ? '#fff' : '#000',
+              color: isDarkMode ? '#000' : '#fff',
+              border: isDarkMode ? '1px solid #333' : '1px solid #ddd'
+            }}
+            disabled={isLoading || error}
+          >
+            {isDarkMode ? '🌞 라이트 모드' : '🌙 다크 모드'}
+          </button>
         </div>
 
         <div 
           ref={viewerRef}
+          style={viewerStyle}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          style={viewerStyle}
         >
-          {isLoading ? (
-            <div className={styles.loading}>
-              <div className={styles.spinner} />
-              <p>파일을 불러오는 중...</p>
-            </div>
-          ) : (
-            <>
-              {contentType === 'svg' && svgContent ? (
-                <div 
-                  dangerouslySetInnerHTML={{ __html: svgContent }} 
-                  style={contentStyle}
-                />
-              ) : contentType === 'image' ? (
-                <img 
-                  src={`${process.env.REACT_APP_API_URL || 'http://localhost:5000'}${result.imageUrl}`} 
-                  alt="도면 이미지"
-                  style={{ ...contentStyle, maxWidth: 'none', height: 'auto' }}
-                  onLoad={() => setSvgLoaded(true)}
-                />
-              ) : contentType === 'pdf' ? (
-                <iframe
-                  src={`${process.env.REACT_APP_API_URL || 'http://localhost:5000'}${result.imageUrl}`}
-                  title="PDF 도면"
-                  style={{ ...contentStyle, border: 'none' }}
-                  onLoad={() => setSvgLoaded(true)}
-                />
-              ) : (
-                <div style={{ textAlign: 'center', padding: '40px' }}>
-                  <p>지원되지 않는 파일 형식입니다.</p>
-                </div>
-              )}
-            </>
-          )}
+          {renderContent()}
         </div>
 
         <div style={{ 
@@ -171,9 +181,26 @@ const ResultViewer = ({ result, onReset }) => {
       </div>
       
       <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-        <button className={styles.button} onClick={onReset}>새 파일 분석하기</button>
-        <button className={styles.buttonSecondary} onClick={handleDownload}>도면 다운로드</button>
-        <button className={styles.buttonDanger} onClick={handleExport}>데이터 내보내기</button>
+        <button 
+          onClick={onReset}
+          className={styles.button}
+        >
+          새 도면 업로드
+        </button>
+        <button 
+          onClick={onDownload}
+          className={styles.buttonSecondary}
+          disabled={isLoading || error}
+        >
+          도면 다운로드
+        </button>
+        <button 
+          onClick={onExport}
+          className={styles.buttonDanger}
+          disabled={isLoading || error}
+        >
+          데이터 내보내기
+        </button>
       </div>
     </div>
   );

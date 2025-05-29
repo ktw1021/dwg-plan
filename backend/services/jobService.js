@@ -1,78 +1,127 @@
 /**
  * 작업 관리 서비스
- * Job 생성, 상태 관리, 진행률 업데이트 등의 비즈니스 로직 처리
+ * 작업 생성, 상태 관리, 진행률 업데이트 등의 비즈니스 로직
  */
-const Job = require('../models/job');
+const mongoose = require('mongoose');
+const logger = require('../config/logger');
+const { uploadSvgToS3, deleteSvgFromS3 } = require('../config/s3');
 const path = require('path');
 const fs = require('fs');
 
+// Job 모델 가져오기
+const Job = mongoose.model('Job');
+
 /**
- * 새 작업 생성
+ * 작업 생성
  * @param {string} jobId - 작업 ID
  * @param {string} filename - 원본 파일명
- * @param {string} filePath - 파일 경로
- * @returns {Object} 생성된 작업 객체
+ * @returns {Promise<Object>} 생성된 작업 객체
  */
-const createJob = (jobId, filename, filePath) => {
-  const newJob = Job.createJob({
-    id: jobId,
-    filename,
-    originalPath: filePath,
-    status: 'processing',
-    progress: 0,
-    message: '처리 시작 중...'
-  });
-  
-  console.log(`새 작업 생성: ${jobId} (${filename})`);
-  return newJob;
+const createJob = async (jobId, filename) => {
+  try {
+    logger.info('작업 생성 시작', { jobId, filename });
+
+    const job = new Job({
+      id: jobId,
+      filename,
+      status: 'pending',
+      logs: [{
+        level: 'info',
+        message: '작업이 생성되었습니다.',
+        metadata: { filename }
+      }]
+    });
+
+    await job.save();
+    logger.info('작업 DB 저장 완료', { 
+      jobId, 
+      status: job.status,
+      filename: job.filename 
+    });
+    
+    return job;
+  } catch (error) {
+    logger.error('작업 생성 실패', { 
+      jobId, 
+      error: error.message,
+      stack: error.stack 
+    });
+    throw error;
+  }
 };
 
 /**
  * 작업 상태 조회
  * @param {string} jobId - 작업 ID
- * @returns {Object|null} 작업 객체 또는 null
+ * @returns {Promise<Object|null>} 작업 객체
  */
-const getJobStatus = (jobId) => {
-  const job = Job.getJob(jobId);
-  
-  if (!job) {
-    console.log(`작업을 찾을 수 없음: ${jobId}`);
+const getJobStatus = async (jobId) => {
+  try {
+    const job = await Job.findOne({ id: jobId });
+    return job;
+  } catch (error) {
+    logger.error('작업 조회 실패', { jobId, error: error.message });
     return null;
   }
-  
-  console.log(`작업 상태 조회: ${jobId} - ${job.status} (${job.progress}%)`);
-  return job;
 };
 
 /**
  * 작업 진행률 업데이트
  * @param {string} jobId - 작업 ID
- * @param {number} progress - 진행률 (0-100)
+ * @param {number} progress - 진행률
  * @param {string} message - 상태 메시지
  * @param {Object} io - Socket.IO 인스턴스
  * @param {Object} data - 추가 데이터
  */
-const updateJobProgress = (jobId, progress, message, io, data = null) => {
+const updateJobProgress = async (jobId, progress, message, io, data = null) => {
   try {
-    // 작업 상태 업데이트
-    Job.updateJob(jobId, {
-      progress,
-      message
+    logger.info('작업 진행률 업데이트 시작', { 
+      jobId, 
+      progress, 
+      message 
     });
-    
+
+    const job = await Job.findOne({ id: jobId });
+    if (!job) {
+      logger.warn('진행률 업데이트 실패: 작업을 찾을 수 없음', { jobId });
+      return;
+    }
+
+    // 작업 상태 업데이트
+    job.status = 'processing';
+    job.progress = progress;
+    job.message = message;
+    job.logs.push({
+      level: 'info',
+      message: `진행률 업데이트: ${progress}%`,
+      metadata: { progress, message, data }
+    });
+
+    await job.save();
+    logger.info('작업 진행률 DB 업데이트 완료', { 
+      jobId, 
+      progress,
+      status: job.status 
+    });
+
     // 소켓으로 진행 상황 알림
     if (io) {
       io.to(jobId).emit('progress', {
         jobId,
+        status: job.status,
         percent: progress,
         message,
         data
       });
+      logger.info('진행률 소켓 알림 전송 완료', { jobId, progress });
     }
-    
-    console.log(`[${jobId}] 진행률 업데이트: ${progress}% - ${message}`);
   } catch (error) {
-    console.error(`진행률 업데이트 오류 (${jobId}):`, error.message);
+    logger.error('진행률 업데이트 실패', { 
+      jobId, 
+      error: error.message,
+      stack: error.stack 
+    });
+    throw error;
   }
 };
 
@@ -82,38 +131,56 @@ const updateJobProgress = (jobId, progress, message, io, data = null) => {
  * @param {Object} result - 처리 결과
  * @param {Object} io - Socket.IO 인스턴스
  */
-const completeJob = (jobId, result, io) => {
+const completeJob = async (jobId, result, io) => {
   try {
-    // 결과 저장 디렉토리 확인
-    const resultsDir = path.join(__dirname, '..', 'results');
-    if (!fs.existsSync(resultsDir)) {
-      fs.mkdirSync(resultsDir, { recursive: true });
+    logger.info('작업 완료 처리 시작', { jobId });
+
+    const job = await Job.findOne({ id: jobId });
+    if (!job) {
+      logger.warn('작업 완료 처리 실패: 작업을 찾을 수 없음', { jobId });
+      return;
     }
-    
+
     // 작업 완료 상태로 업데이트
     const updateData = {
       status: 'done',
       progress: 100,
-      doors: result.doors || [],
-      imageUrl: `/results/${path.basename(result.svgFile)}`,
-      entityCount: result.entityCount || 0,
-      layerCount: result.layerCount || 0,
-      majorLayers: result.majorLayers || []
+      message: '완료',
+      imageUrl: result.imageUrl,
+      entityCount: result.entityCount,
+      details: result.details,
+      metadata: result.metadata
     };
-    
-    Job.updateJob(jobId, updateData);
-    
-    // 완료 알림 전송
+
+    Object.assign(job, updateData);
+    job.logs.push({
+      level: 'info',
+      message: '작업이 완료되었습니다.',
+      metadata: { result }
+    });
+
+    await job.save();
+    logger.info('작업 완료 DB 업데이트 완료', { 
+      jobId,
+      status: job.status,
+      imageUrl: result.imageUrl
+    });
+
+    // 완료 알림 전송 (SVG 내용 포함)
     if (io) {
       io.to(jobId).emit('complete', {
         jobId,
-        ...updateData
+        ...updateData,
+        svgContent: result.svgContent // SVG 내용 직접 전달
       });
+      logger.info('완료 소켓 알림 전송 완료', { jobId });
     }
-    
-    console.log(`작업 완료: ${jobId} (엔티티: ${result.entityCount}개)`);
   } catch (error) {
-    console.error(`작업 완료 처리 오류 (${jobId}):`, error.message);
+    logger.error('작업 완료 처리 실패', { 
+      jobId, 
+      error: error.message,
+      stack: error.stack 
+    });
     throw error;
   }
 };
@@ -121,30 +188,48 @@ const completeJob = (jobId, result, io) => {
 /**
  * 작업 오류 처리
  * @param {string} jobId - 작업 ID
- * @param {Error} error - 오류 객체
+ * @param {Object} error - 오류 정보
  * @param {Object} io - Socket.IO 인스턴스
  */
-const handleJobError = (jobId, error, io) => {
+const handleJobError = async (jobId, error, io) => {
   try {
-    const errorMessage = error.message || '알 수 없는 오류가 발생했습니다';
-    
+    const job = await Job.findOne({ id: jobId });
+    if (!job) {
+      logger.warn('오류 처리 실패: 작업을 찾을 수 없음', { jobId });
+      return;
+    }
+
     // 오류 상태 업데이트
-    Job.updateJob(jobId, {
-      status: 'error',
-      message: errorMessage
+    job.status = 'error';
+    job.message = error.message || '알 수 없는 오류가 발생했습니다';
+    job.logs.push({
+      level: 'error',
+      message: error.message,
+      metadata: { error }
     });
-    
+
+    await job.save();
+    logger.info('오류 상태 DB 업데이트 완료', { 
+      jobId,
+      status: job.status,
+      error: error.message
+    });
+
     // 오류 알림 전송
     if (io) {
       io.to(jobId).emit('error', {
         jobId,
-        message: `처리 오류: ${errorMessage}`
+        message: error.message
       });
+      logger.info('오류 소켓 알림 전송 완료', { jobId });
     }
-    
-    console.error(`작업 오류 처리: ${jobId} - ${errorMessage}`);
-  } catch (updateError) {
-    console.error(`작업 오류 상태 업데이트 실패 (${jobId}):`, updateError.message);
+  } catch (error) {
+    logger.error('오류 상태 업데이트 실패', { 
+      jobId, 
+      error: error.message,
+      stack: error.stack 
+    });
+    throw error;
   }
 };
 
@@ -154,13 +239,15 @@ const handleJobError = (jobId, error, io) => {
  * @returns {Object} API 응답 형식의 작업 데이터
  */
 const formatJobResponse = (job) => {
+  if (!job) return null;
+
   const baseResponse = {
     success: true,
     jobId: job.id,
     status: job.status,
     filename: job.filename
   };
-  
+
   switch (job.status) {
     case 'pending':
     case 'processing':
@@ -169,17 +256,16 @@ const formatJobResponse = (job) => {
         progress: job.progress || 0,
         message: job.message || '처리 중...'
       };
-    
+
     case 'done':
       return {
         ...baseResponse,
-        doors: job.doors || [],
         imageUrl: job.imageUrl,
         entityCount: job.entityCount || 0,
-        layerCount: job.layerCount || 0,
-        majorLayers: job.majorLayers || []
+        details: job.details || {},
+        metadata: job.metadata || {}
       };
-    
+
     case 'error':
       return {
         success: false,
@@ -187,34 +273,27 @@ const formatJobResponse = (job) => {
         status: job.status,
         message: job.message || '처리 중 오류가 발생했습니다'
       };
-    
+
     default:
       return baseResponse;
   }
 };
 
 /**
- * 만료된 작업 정리 (선택적)
+ * 만료된 작업 정리
  * @param {number} maxAgeHours - 최대 보관 시간 (시간 단위)
  */
-const cleanupExpiredJobs = (maxAgeHours = 24) => {
+const cleanupExpiredJobs = async (maxAgeHours = 24) => {
   try {
-    const allJobs = Job.getAllJobs();
-    const cutoffTime = Date.now() - (maxAgeHours * 60 * 60 * 1000);
-    let cleanedCount = 0;
+    const cutoffDate = new Date(Date.now() - (maxAgeHours * 60 * 60 * 1000));
+    const result = await Job.deleteMany({ createdAt: { $lt: cutoffDate } });
     
-    Object.values(allJobs).forEach(job => {
-      if (job.createdAt && job.createdAt < cutoffTime) {
-        Job.deleteJob(job.id);
-        cleanedCount++;
-      }
+    logger.info(`만료된 작업 정리 완료`, { 
+      deletedCount: result.deletedCount,
+      maxAgeHours 
     });
-    
-    if (cleanedCount > 0) {
-      console.log(`만료된 작업 ${cleanedCount}개 정리 완료`);
-    }
   } catch (error) {
-    console.error('만료된 작업 정리 오류:', error.message);
+    logger.error('만료된 작업 정리 실패', { error: error.message });
   }
 };
 

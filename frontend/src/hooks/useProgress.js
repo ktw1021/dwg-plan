@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { getFloorplanResult } from '../services/api';
+import { getJobStatus } from '../services/api';
 
 export const useProgress = (jobId, onComplete) => {
   const [progress, setProgress] = useState(0);
@@ -8,29 +8,38 @@ export const useProgress = (jobId, onComplete) => {
   const [error, setError] = useState(null);
   const socket = useSocket();
 
+  // 폴링으로 상태 확인
   useEffect(() => {
     if (!jobId) return;
 
-    // 폴링으로 결과 확인
-    const checkResultInterval = setInterval(async () => {
+    const checkStatus = async () => {
       try {
-        const result = await getFloorplanResult(jobId);
-        
-        if (result.status === 'done') {
-          clearInterval(checkResultInterval);
-          onComplete(result);
-        } else if (result.status === 'error') {
-          clearInterval(checkResultInterval);
-          setError(result.error || '분석 중 오류가 발생했습니다.');
+        const response = await getJobStatus(jobId);
+        if (!response.success) {
+          setError(response.message || '분석 중 오류가 발생했습니다.');
+          return;
+        }
+
+        setProgress(response.progress || 0);
+        setMessage(response.message || '처리 중...');
+
+        if (response.status === 'done') {
+          onComplete(response);
+        } else if (response.status === 'error') {
+          setError(response.message || '분석 중 오류가 발생했습니다.');
         }
       } catch (error) {
-        console.error('Error checking result:', error);
+        setError(error.message || '상태 확인 중 오류가 발생했습니다.');
       }
-    }, 3000);
+    };
 
-    return () => clearInterval(checkResultInterval);
+    const interval = setInterval(checkStatus, 3000);
+    checkStatus(); // 초기 상태 확인
+
+    return () => clearInterval(interval);
   }, [jobId, onComplete]);
 
+  // 소켓 이벤트 처리
   useEffect(() => {
     if (!socket || !jobId) return;
 
@@ -38,17 +47,19 @@ export const useProgress = (jobId, onComplete) => {
 
     const handleProgress = (data) => {
       if (data.jobId === jobId) {
-        setProgress(data.percent);
+        setProgress(data.percent || 0);
         if (data.message) setMessage(data.message);
         
         if (data.percent === 100) {
-          getFloorplanResult(jobId)
-            .then(result => {
-              if (result.status === 'done') {
-                onComplete(result);
+          getJobStatus(jobId)
+            .then(response => {
+              if (response.success && response.status === 'done') {
+                onComplete(response);
               }
             })
-            .catch(console.error);
+            .catch(error => {
+              setError(error.message || '결과 확인 중 오류가 발생했습니다.');
+            });
         }
       }
     };

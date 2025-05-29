@@ -1,118 +1,89 @@
-const fs = require('fs');
-const path = require('path');
+const mongoose = require('mongoose');
 
-// File-system based job store
-const jobsDir = path.join(__dirname, '..', 'jobs');
-if (!fs.existsSync(jobsDir)) {
-  fs.mkdirSync(jobsDir, { recursive: true });
-  console.log(`Created jobs directory: ${jobsDir}`);
+// 이미 존재하는 모델이 있다면 사용하고, 없으면 새로 생성
+let Job;
+try {
+  Job = mongoose.model('Job');
+} catch (error) {
+  const jobSchema = new mongoose.Schema({
+    id: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true
+    },
+    filename: {
+      type: String,
+      required: true
+    },
+    status: {
+      type: String,
+      required: true,
+      enum: ['pending', 'processing', 'done', 'error'],
+      default: 'pending'
+    },
+    progress: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100
+    },
+    message: {
+      type: String,
+      default: '준비 중...'
+    },
+    doors: [{
+      type: mongoose.Schema.Types.Mixed
+    }],
+    imageUrl: {
+      type: String
+    },
+    svgContent: {
+      type: String
+    },
+    result: {
+      type: mongoose.Schema.Types.Mixed
+    },
+    entityCount: {
+      type: Number,
+      default: 0
+    },
+    layerCount: {
+      type: Number,
+      default: 0
+    },
+    majorLayers: [{
+      type: String
+    }],
+    logs: [{
+      level: {
+        type: String,
+        enum: ['info', 'warn', 'error'],
+        required: true
+      },
+      message: {
+        type: String,
+        required: true
+      },
+      timestamp: {
+        type: Date,
+        default: Date.now
+      },
+      metadata: {
+        type: mongoose.Schema.Types.Mixed
+      }
+    }]
+  }, {
+    timestamps: true,
+    strict: true
+  });
+
+  // 인덱스 생성
+  jobSchema.index({ createdAt: -1 });
+  jobSchema.index({ status: 1, createdAt: -1 });
+
+  // 모델 생성
+  Job = mongoose.model('Job', jobSchema);
 }
-
-/**
- * 간단한 작업 관리 모델
- */
-const Job = {
-  /**
-   * 새 작업 생성
-   */
-  createJob: function(jobData) {
-    console.log(`Creating job: ${jobData.id}`);
-    
-    const filePath = path.join(jobsDir, `${jobData.id}.json`);
-    try {
-      // 타임스탬프 추가
-      const jobWithTimestamps = {
-        ...jobData,
-        createdAt: jobData.createdAt || new Date(),
-        updatedAt: new Date()
-      };
-      
-      fs.writeFileSync(filePath, JSON.stringify(jobWithTimestamps, null, 2));
-      console.log(`Job created: ${jobData.id}`);
-      return jobWithTimestamps;
-    } catch (error) {
-      console.error(`Error creating job: ${error}`);
-      throw error;
-    }
-  },
-  
-  /**
-   * 작업 정보 가져오기
-   */
-  getJob: function(jobId) {
-    const filePath = path.join(jobsDir, `${jobId}.json`);
-    console.log(`Looking for job at: ${filePath}`);
-    
-    try {
-      if (!fs.existsSync(filePath)) {
-        console.log(`Job not found: ${jobId}`);
-        return null;
-      }
-      
-      const data = fs.readFileSync(filePath, 'utf8');
-      console.log(`Job found: ${jobId}`);
-      return JSON.parse(data);
-    } catch (error) {
-      console.error(`Error getting job: ${error}`);
-      return null;
-    }
-  },
-  
-  /**
-   * 작업 정보 업데이트
-   */
-  updateJob: function(jobId, updateData) {
-    console.log(`Updating job: ${jobId}`);
-    const filePath = path.join(jobsDir, `${jobId}.json`);
-    
-    try {
-      if (!fs.existsSync(filePath)) {
-        console.error(`Job not found for update: ${jobId}`);
-        return null;
-      }
-      
-      const data = fs.readFileSync(filePath, 'utf8');
-      const job = JSON.parse(data);
-      
-      // 필드 업데이트
-      const updatedJob = {
-        ...job,
-        ...updateData,
-        updatedAt: new Date()
-      };
-      
-      // 변경된 작업 저장
-      fs.writeFileSync(filePath, JSON.stringify(updatedJob, null, 2));
-      console.log(`Job updated: ${jobId}`);
-      
-      return updatedJob;
-    } catch (error) {
-      console.error(`Error updating job: ${error}`);
-      throw error;
-    }
-  },
-  
-  /**
-   * 작업 삭제
-   */
-  deleteJob: function(jobId) {
-    console.log(`Deleting job: ${jobId}`);
-    const filePath = path.join(jobsDir, `${jobId}.json`);
-    
-    try {
-      if (!fs.existsSync(filePath)) {
-        console.log(`Job not found for deletion: ${jobId}`);
-        return false;
-      }
-      
-      fs.unlinkSync(filePath);
-      console.log(`Job deleted: ${jobId}`);
-      return true;
-    } catch (error) {
-      console.error(`Error deleting job: ${error}`);
-      return false;
-    }
-  }
-};
 
 module.exports = Job; 

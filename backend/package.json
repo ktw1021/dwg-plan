@@ -13,17 +13,19 @@
   "license": "ISC",
   "dependencies": {
     "@dxfjs/parser": "^0.3.2",
-    "@mlightcad/libredwg-web": "^0.1.5",
+    "aws-sdk": "^2.1692.0",
     "canvas": "^2.11.2",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "dxf": "^5.2.0",
     "dxf-parser": "^1.1.2",
     "express": "^5.1.0",
-    "mongoose": "^8.15.0",
+    "mongoose": "^8.1.1",
     "multer": "^2.0.0",
     "socket.io": "^4.8.1",
     "uuid": "^9.0.1",
+    "winston": "^3.17.0",
+    "winston-mongodb": "^6.0.0",
     "xml2js": "^0.6.2"
   },
   "devDependencies": {
