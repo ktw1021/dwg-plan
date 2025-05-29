@@ -30,6 +30,15 @@ router.post('/upload',
 router.get('/status/:jobId', dwgController.getJobStatus);
 
 /**
+ * SVG 컨텐츠 직접 조회
+ * GET /api/dwg/svg/:jobId
+ * 
+ * @param {string} jobId - 작업 ID
+ * @returns {Object} { success: boolean, svgContent: string, imageUrl: string }
+ */
+router.get('/svg/:jobId', dwgController.getSvgContent);
+
+/**
  * 모든 작업 목록 조회 (관리용)
  * GET /api/dwg/jobs
  * 

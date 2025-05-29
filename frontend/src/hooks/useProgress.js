@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { getFloorplanResult } from '../services/api';
+import { getJobStatus } from '../services/api';
 
 export const useProgress = (jobId, onComplete) => {
   const [progress, setProgress] = useState(0);
@@ -11,24 +11,35 @@ export const useProgress = (jobId, onComplete) => {
   useEffect(() => {
     if (!jobId) return;
 
-    // 폴링으로 결과 확인
-    const checkResultInterval = setInterval(async () => {
+    // 폴링으로 상태 확인
+    const checkStatusInterval = setInterval(async () => {
       try {
-        const result = await getFloorplanResult(jobId);
+        const response = await getJobStatus(jobId);
+        console.log('Status check response:', response);
         
-        if (result.status === 'done') {
-          clearInterval(checkResultInterval);
-          onComplete(result);
-        } else if (result.status === 'error') {
-          clearInterval(checkResultInterval);
-          setError(result.error || '분석 중 오류가 발생했습니다.');
+        if (!response.success) {
+          clearInterval(checkStatusInterval);
+          setError(response.message || '분석 중 오류가 발생했습니다.');
+          return;
+        }
+
+        setProgress(response.progress || 0);
+        setMessage(response.message || '처리 중...');
+
+        if (response.status === 'done') {
+          console.log('Job completed via polling:', response);
+          clearInterval(checkStatusInterval);
+          onComplete(response);
+        } else if (response.status === 'error') {
+          clearInterval(checkStatusInterval);
+          setError(response.message || '분석 중 오류가 발생했습니다.');
         }
       } catch (error) {
-        console.error('Error checking result:', error);
+        console.error('상태 확인 중 오류:', error);
       }
     }, 3000);
 
-    return () => clearInterval(checkResultInterval);
+    return () => clearInterval(checkStatusInterval);
   }, [jobId, onComplete]);
 
   useEffect(() => {
@@ -36,25 +47,30 @@ export const useProgress = (jobId, onComplete) => {
 
     socket.emit('join', { jobId });
 
-    const handleProgress = (data) => {
+    const handleProgress = async (data) => {
+      console.log('Socket progress event:', data);
       if (data.jobId === jobId) {
         setProgress(data.percent);
         if (data.message) setMessage(data.message);
         
         if (data.percent === 100) {
-          getFloorplanResult(jobId)
-            .then(result => {
-              if (result.status === 'done') {
-                onComplete(result);
-              }
-            })
-            .catch(console.error);
+          try {
+            const response = await getJobStatus(jobId);
+            console.log('Final status check response:', response);
+            if (response.success && response.status === 'done') {
+              onComplete(response);
+            }
+          } catch (error) {
+            console.error('결과 확인 중 오류:', error);
+            setError('결과를 가져오는 중 오류가 발생했습니다.');
+          }
         }
       }
     };
 
     const handleError = (data) => {
       if (data.jobId === jobId) {
+        console.error('Socket error event:', data);
         setError(data.message || '분석 중 오류가 발생했습니다.');
       }
     };

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useViewer } from '../hooks';
+import { useSocket } from '../context/SocketContext';
 import { downloadFile, exportData } from '../utils';
 import ResultViewer from '../components/ResultViewer';
 import styles from '../styles/common.module.css';
@@ -9,15 +10,9 @@ const ResultPage = () => {
   const { jobId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const socket = useSocket();
   const result = location.state?.result;
   const uploadedFile = location.state?.file;
-
-  useEffect(() => {
-    // 직접 URL 접근 시 결과 데이터가 없으면 업로드 페이지로 리다이렉트
-    if (!result || !uploadedFile) {
-      navigate('/upload', { replace: true });
-    }
-  }, [result, uploadedFile, navigate]);
 
   const {
     contentType,
@@ -34,8 +29,24 @@ const ResultPage = () => {
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,
-    setSvgLoaded
+    setSvgLoaded,
+    setSvgContent
   } = useViewer(result);
+
+  useEffect(() => {
+    // 직접 URL 접근 시 결과 데이터가 없으면 업로드 페이지로 리다이렉트
+    if (!result || !uploadedFile) {
+      navigate('/upload', { replace: true });
+    }
+  }, [result, uploadedFile, navigate]);
+
+  // WebSocket 이벤트 핸들러 설정
+  useEffect(() => {
+    if (!socket || !jobId) return;
+
+    // 작업 룸에 참가
+    socket.emit('join', { jobId });
+  }, [socket, jobId]);
 
   const handleReset = () => {
     navigate('/upload');
@@ -63,7 +74,7 @@ const ResultPage = () => {
     return null; // 리다이렉트 되기 전까지 아무것도 렌더링하지 않음
   }
 
-  if (!result?.imageUrl) {
+  if (!result?.imageUrl && !svgContent) {
     return (
       <div className={styles.pageContainer}>
         <div className={styles.error}>

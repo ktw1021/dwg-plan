@@ -1,15 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import api from '../services/api';
 
 const ZOOM_FACTOR = 1.2;
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 10;
 const WHEEL_ZOOM_FACTOR = 0.1;
+const POLLING_INTERVAL = 1000; // 1초마다 폴링
 
 export const useViewer = (result) => {
   const [contentType, setContentType] = useState('svg');
   const [svgContent, setSvgContent] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [svgLoaded, setSvgLoaded] = useState(false);
+  const [error, setError] = useState(null);
   
   // Transform 상태
   const [scale, setScale] = useState(1);
@@ -21,6 +24,76 @@ export const useViewer = (result) => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   
   const viewerRef = useRef(null);
+  const pollingRef = useRef(null);
+
+  // SVG 컨텐츠 폴링
+  const pollSvgContent = useCallback(async (jobId) => {
+    try {
+      const response = await api.get(`/api/dwg/svg/${jobId}`);
+      console.log('useViewer: Polling response', response.data);
+
+      if (response.data.success) {
+        if (response.data.status === 'done' && response.data.svgContent) {
+          console.log('useViewer: SVG content received');
+          setSvgContent(response.data.svgContent);
+          setContentType('svg');
+          setIsLoading(false);
+          setSvgLoaded(true);
+          
+          // 폴링 중단
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+        }
+      } else {
+        throw new Error(response.data.message || '도면 데이터를 불러오는데 실패했습니다.');
+      }
+    } catch (error) {
+      console.error('useViewer: Polling error', error);
+      setError(error.message);
+      setIsLoading(false);
+      
+      // 에러 발생 시 폴링 중단
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    }
+  }, []);
+
+  // 폴링 시작
+  useEffect(() => {
+    if (!result?.jobId) {
+      console.log('useViewer: No jobId available');
+      return;
+    }
+
+    console.log('useViewer: Starting polling', { jobId: result.jobId });
+    
+    // 상태 초기화
+    setIsLoading(true);
+    setSvgLoaded(false);
+    setError(null);
+    resetTransform();
+
+    // 즉시 한 번 실행
+    pollSvgContent(result.jobId);
+
+    // 폴링 시작
+    pollingRef.current = setInterval(() => {
+      pollSvgContent(result.jobId);
+    }, POLLING_INTERVAL);
+
+    return () => {
+      // 정리: 폴링 중단
+      if (pollingRef.current) {
+        console.log('useViewer: Cleaning up polling');
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [result?.jobId, pollSvgContent]);
 
   const resetTransform = useCallback(() => {
     setScale(1);
@@ -80,46 +153,6 @@ export const useViewer = (result) => {
     }
   }, [svgLoaded, scale, panX, panY]);
 
-  const getFileType = useCallback((imageUrl) => {
-    if (!imageUrl) return 'svg';
-    const ext = imageUrl.split('.').pop().toLowerCase();
-    if (ext === 'pdf') return 'pdf';
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return 'image';
-    return 'svg';
-  }, []);
-
-  // 콘텐츠 로딩
-  useEffect(() => {
-    if (!result?.imageUrl) return;
-
-    setIsLoading(true);
-    setSvgLoaded(false);
-    resetTransform();
-    
-    const fileType = getFileType(result.imageUrl);
-    setContentType(fileType);
-    
-    if (fileType === 'svg') {
-      const apiUrl = process.env.REACT_APP_API_URL;
-      
-      fetch(`${apiUrl}${result.imageUrl}`)
-        .then(response => response.text())
-        .then(data => {
-          setSvgContent(data);
-          setIsLoading(false);
-          setSvgLoaded(true);
-        })
-        .catch(error => {
-          console.error("SVG 로딩 오류:", error);
-          setIsLoading(false);
-        });
-    } else {
-      setSvgContent(null);
-      setIsLoading(false);
-      setSvgLoaded(true);
-    }
-  }, [result, resetTransform, getFileType]);
-
   // 휠 이벤트 등록
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -141,18 +174,21 @@ export const useViewer = (result) => {
     contentType,
     svgContent,
     isLoading,
-    svgLoaded,
+    error,
     scale,
     panX,
     panY,
     isDragging,
     viewerRef,
-    resetTransform,
     handleZoomIn,
     handleZoomOut,
+    resetTransform,
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,
-    setSvgLoaded
+    handleWheel,
+    setSvgLoaded,
+    svgLoaded,
+    setSvgContent
   };
 }; 

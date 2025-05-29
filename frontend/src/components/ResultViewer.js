@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import styles from '../styles/common.module.css';
 
 const ResultViewer = ({
   contentType,
   svgContent,
   isLoading,
+  error,
   scale,
   panX,
   panY,
@@ -22,6 +23,16 @@ const ResultViewer = ({
   onExport,
   onReset
 }) => {
+  useEffect(() => {
+    console.log('ResultViewer: Props update', {
+      contentType,
+      hasSvgContent: !!svgContent,
+      isLoading,
+      hasError: !!error,
+      contentStart: svgContent?.substring(0, 50)
+    });
+  }, [contentType, svgContent, isLoading, error]);
+
   const viewerStyle = {
     cursor: isDragging ? 'grabbing' : 'grab',
     width: '100%',
@@ -41,56 +52,95 @@ const ResultViewer = ({
     transformOrigin: '0 0'
   };
 
+  const renderContent = () => {
+    console.log('ResultViewer: Rendering content', {
+      isLoading,
+      hasError: !!error,
+      hasSvgContent: !!svgContent,
+      svgContentLength: svgContent?.length,
+      svgContentStart: svgContent?.substring(0, 100),
+      contentType
+    });
+
+    if (isLoading) {
+      return (
+        <div style={{ textAlign: 'center', padding: '40px' }}>
+          <p>도면을 불러오는 중입니다...</p>
+        </div>
+      );
+    }
+
+    if (error) {
+      console.error('ResultViewer: Error rendering content:', error);
+      return (
+        <div style={{ textAlign: 'center', padding: '40px' }}>
+          <p style={{ color: '#dc3545', marginBottom: '10px' }}>도면을 불러오는데 실패했습니다</p>
+          <p style={{ fontSize: '0.9em', color: '#6c757d' }}>{error}</p>
+        </div>
+      );
+    }
+
+    if (!svgContent) {
+      console.warn('ResultViewer: No SVG content available');
+      return (
+        <div style={{ textAlign: 'center', padding: '40px' }}>
+          <p>도면 데이터가 없습니다</p>
+        </div>
+      );
+    }
+
+    console.log('ResultViewer: Attempting to render SVG content');
+    return (
+      <div 
+        dangerouslySetInnerHTML={{ __html: svgContent }} 
+        style={contentStyle}
+        onLoad={() => {
+          console.log('ResultViewer: SVG content loaded successfully');
+          setSvgLoaded(true);
+        }}
+        onError={(e) => {
+          console.error('ResultViewer: SVG rendering error:', e);
+        }}
+      />
+    );
+  };
+
   return (
     <div className={styles.viewerContainer}>
       <div style={{ marginBottom: '20px' }}>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '20px' }}>
-          <button onClick={handleZoomIn} className={styles.button}>확대 (+)</button>
-          <button onClick={handleZoomOut} className={styles.button}>축소 (-)</button>
-          <button onClick={resetTransform} className={styles.buttonSecondary}>원래 크기</button>
+          <button 
+            onClick={handleZoomIn}
+            className={styles.button}
+            disabled={isLoading || error}
+          >
+            확대 (+)
+          </button>
+          <button 
+            onClick={handleZoomOut}
+            className={styles.button}
+            disabled={isLoading || error}
+          >
+            축소 (-)
+          </button>
+          <button 
+            onClick={resetTransform}
+            className={styles.buttonSecondary}
+            disabled={isLoading || error}
+          >
+            초기화
+          </button>
         </div>
 
         <div 
           ref={viewerRef}
+          style={viewerStyle}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          style={viewerStyle}
         >
-          {isLoading ? (
-            <div className={styles.loading}>
-              <div className={styles.spinner} />
-              <p>파일을 불러오는 중...</p>
-            </div>
-          ) : (
-            <>
-              {contentType === 'svg' && svgContent ? (
-                <div 
-                  dangerouslySetInnerHTML={{ __html: svgContent }} 
-                  style={contentStyle}
-                />
-              ) : contentType === 'image' ? (
-                <img 
-                  src={`${process.env.REACT_APP_API_URL}${result.imageUrl}`} 
-                  alt="도면 이미지"
-                  style={{ ...contentStyle, maxWidth: 'none', height: 'auto' }}
-                  onLoad={() => setSvgLoaded(true)}
-                />
-              ) : contentType === 'pdf' ? (
-                <iframe
-                  src={`${process.env.REACT_APP_API_URL}${result.imageUrl}`}
-                  title="PDF 도면"
-                  style={{ ...contentStyle, border: 'none' }}
-                  onLoad={() => setSvgLoaded(true)}
-                />
-              ) : (
-                <div style={{ textAlign: 'center', padding: '40px' }}>
-                  <p>지원되지 않는 파일 형식입니다.</p>
-                </div>
-              )}
-            </>
-          )}
+          {renderContent()}
         </div>
 
         <div style={{ 
@@ -118,9 +168,26 @@ const ResultViewer = ({
       </div>
       
       <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-        <button className={styles.button} onClick={onReset}>새 파일 분석하기</button>
-        <button className={styles.buttonSecondary} onClick={onDownload}>도면 다운로드</button>
-        <button className={styles.buttonDanger} onClick={onExport}>데이터 내보내기</button>
+        <button 
+          onClick={onReset}
+          className={styles.button}
+        >
+          새 도면 업로드
+        </button>
+        <button 
+          onClick={onDownload}
+          className={styles.buttonSecondary}
+          disabled={isLoading || error}
+        >
+          도면 다운로드
+        </button>
+        <button 
+          onClick={onExport}
+          className={styles.buttonDanger}
+          disabled={isLoading || error}
+        >
+          데이터 내보내기
+        </button>
       </div>
     </div>
   );
