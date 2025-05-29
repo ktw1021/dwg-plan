@@ -8,7 +8,11 @@ const UploadPage = () => {
   const navigate = useNavigate();
   
   const handleUploadSuccess = (jobId) => {
-    navigate(`/progress/${jobId}`);
+    navigate(`/progress/${jobId}`, {
+      state: {
+        file: file // 파일 정보를 Progress 페이지로 전달
+      }
+    });
   };
 
   const {

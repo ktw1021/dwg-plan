@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useViewer } from '../hooks';
 import { downloadFile, exportData } from '../utils';
@@ -10,6 +10,14 @@ const ResultPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const result = location.state?.result;
+  const uploadedFile = location.state?.file;
+
+  useEffect(() => {
+    // 직접 URL 접근 시 결과 데이터가 없으면 업로드 페이지로 리다이렉트
+    if (!result || !uploadedFile) {
+      navigate('/upload', { replace: true });
+    }
+  }, [result, uploadedFile, navigate]);
 
   const {
     contentType,
@@ -50,6 +58,10 @@ const ResultPage = () => {
     if (!result || !jobId) return;
     exportData(result, `cad-data-${jobId}.json`);
   }, [result, jobId]);
+
+  if (!result || !uploadedFile) {
+    return null; // 리다이렉트 되기 전까지 아무것도 렌더링하지 않음
+  }
 
   if (!result?.imageUrl) {
     return (
