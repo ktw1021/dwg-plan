@@ -100,11 +100,10 @@ const detectDoors = (helper) => {
       angleDiff = angleDiff * (180 / Math.PI);
       
       // 문 조건 확인
-      const isValidSize = radius >= 300 && radius <= 1200;
-      const isValidAngle = angleDiff >= 85 && angleDiff <= 95;
-      const isDoorLayer = true;  // 레이어 조건 제거 - 모든 레이어 허용
+      const isValidSize = radius >= 300 && radius <= 1300;
+      const isValidAngle = angleDiff >= 75 && angleDiff <= 105;
       
-      if (isValidSize && isValidAngle && isDoorLayer) {
+      if (isValidSize && isValidAngle) {
         // 1) midAngle 계산 (오직 start/end)
         const rawMid = getMidAngle(startAngle, endAngle);
 

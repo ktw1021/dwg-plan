@@ -228,7 +228,7 @@ const processDxfFile = async (jobId, filename, filePath, progressCallback) => {
     }
 
     // 5. S3에 업로드 (백그라운드에서 처리)
-    progressCallback(95, 'S3 업로드 중...');
+    progressCallback(95, '이미지 저장 중...');
     currentStep = 'S3_UPLOAD';
     logger.info('S3 업로드 시작', { jobId });
 

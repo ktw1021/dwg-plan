@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import styles from '../styles/common.module.css';
 
 const ResultViewer = ({
@@ -23,6 +23,8 @@ const ResultViewer = ({
   onExport,
   onReset
 }) => {
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
   useEffect(() => {
     console.log('ResultViewer: Props update', {
       contentType,
@@ -39,9 +41,10 @@ const ResultViewer = ({
     height: '700px',
     overflow: 'hidden',
     position: 'relative',
-    border: '1px solid #ddd',
+    border: !isDarkMode ? '1px solid #333' : '1px solid #fff',
     borderRadius: '8px',
-    background: '#f8f9fa'
+    background: !isDarkMode ? '#fff' : '#1a1a1a',
+    color: !isDarkMode ? '#000' : '#fff'
   };
 
   const contentStyle = {
@@ -49,7 +52,8 @@ const ResultViewer = ({
     height: '100%',
     userSelect: 'none',
     transform: `translate(${panX}px, ${panY}px) scale(${scale})`,
-    transformOrigin: '0 0'
+    transformOrigin: '0 0',
+    filter: isDarkMode ? 'invert(1) brightness(1.5) contrast(1.5)' : 'none'
   };
 
   const renderContent = () => {
@@ -129,6 +133,24 @@ const ResultViewer = ({
             disabled={isLoading || error}
           >
             초기화
+          </button>
+          <button 
+            onClick={() => setIsDarkMode(!isDarkMode)}
+            style={{
+              padding: '12px 24px',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '16px',
+              fontWeight: '500',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              background: isDarkMode ? '#fff' : '#000',
+              color: isDarkMode ? '#000' : '#fff',
+              border: isDarkMode ? '1px solid #333' : '1px solid #ddd'
+            }}
+            disabled={isLoading || error}
+          >
+            {isDarkMode ? '🌞 라이트 모드' : '🌙 다크 모드'}
           </button>
         </div>
 

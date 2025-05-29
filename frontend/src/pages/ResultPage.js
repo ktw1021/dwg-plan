@@ -53,17 +53,17 @@ const ResultPage = () => {
   };
 
   const handleDownload = useCallback(() => {
-    if (!result?.imageUrl || !jobId) return;
+    if (!svgContent || !jobId) return;
     
-    const apiUrl = process.env.REACT_APP_API_URL;
-    const ext = result.imageUrl.split('.').pop();
-    const filename = contentType === 'svg' ? `cad-visualization-${jobId}.svg` :
-                    contentType === 'image' ? `floor-plan-image-${jobId}.${ext}` :
-                    contentType === 'pdf' ? `floor-plan-pdf-${jobId}.${ext}` :
-                    `file-${jobId}.${ext}`;
+    const filename = `cad-visualization-${jobId}.svg`;
+    const blob = new Blob([svgContent], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
     
-    downloadFile(`${apiUrl}${result.imageUrl}`, filename);
-  }, [result, contentType, jobId]);
+    downloadFile(url, filename);
+    
+    // Cleanup
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+  }, [svgContent, jobId]);
   
   const handleExport = useCallback(() => {
     if (!result || !jobId) return;
@@ -117,6 +117,7 @@ const ResultPage = () => {
         contentType={contentType}
         svgContent={svgContent}
         isLoading={isLoading}
+        error={null}
         scale={scale}
         panX={panX}
         panY={panY}

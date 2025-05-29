@@ -1,236 +1,250 @@
-# DWG 파일 시각화 시스템
+# DWG Plan Processor
 
-Web-based DWG File Visualization System
+DWG 도면 파일을 처리하고 시각화하는 웹 애플리케이션입니다.
 
-## 📋 프로젝트 개요
-
-DWG 파일을 업로드하여 SVG 뷰어로 시각화하는 웹 애플리케이션입니다.  
-CAD 도면 파일을 브라우저에서 바로 확인하고, 줌/팬 기능으로 상세하게 탐색할 수 있습니다.
-
-### 🎯 주요 기능
-- **DWG 파일 업로드** - 다양한 AutoCAD 버전 지원
-- **실시간 변환 상태** - Socket.IO 기반 진행 상황 표시  
-- **인터랙티브 뷰어** - 마우스 휠 줌, 드래그 팬 기능
-- **SVG 다운로드** - 변환된 도면 파일 저장
-- **메모리 관리** - 90% of 1GB 제한으로 안정적 운영
-- **성능 모니터링** - 처리 시간 제한 (30초) 및 메트릭 수집
-
-### 🛠 기술 스택
+## 프로젝트 구조
 
 ```
-Backend (Node.js):
-├── Express.js - 웹 서버 프레임워크
-├── Socket.IO - 실시간 상태 업데이트
-├── Multer - 파일 업로드 처리
-├── dxf - DXF 파일 파싱
-└── ODA File Converter - DWG→DXF 변환
-
-Frontend (React):
-├── React - 사용자 인터페이스
-├── Socket.IO Client - 실시간 통신
-├── Custom Hooks - 뷰어 상태 관리
-└── CSS Transform - SVG 뷰어 줌/팬
+dwg-plan/
+├── frontend/           # React 프론트엔드
+│   ├── src/
+│   │   ├── assets/      # 이미지 등 정적 자원
+│   │   ├── components/  # 재사용 가능한 UI 컴포넌트
+│   │   ├── context/     # React Context (Socket.IO 등)
+│   │   ├── hooks/       # 커스텀 훅
+│   │   ├── pages/       # 페이지 컴포넌트
+│   │   ├── services/    # API 통신 서비스
+│   │   ├── styles/      # CSS 스타일
+│   │   └── utils/       # 유틸리티 함수
+│   └── public/
+└── backend/            # Node.js 백엔드
+    ├── config/         # 설정 파일
+    ├── controllers/    # 요청 처리 컨트롤러
+    ├── middleware/     # 미들웨어
+    ├── models/         # MongoDB 모델
+    ├── routes/         # API 라우트
+    ├── services/       # 비즈니스 로직
+    ├── utils/          # 유틸리티 함수
+    ├── uploads/        # 업로드된 파일 저장
+    ├── temp/           # 임시 파일
+    └── results/        # 처리 결과 파일
 ```
 
-### 🔄 변환 프로세스
+## 데이터 흐름
 
+```mermaid
+graph LR
+    A[사용자] --> B[프론트엔드]
+    B --> C[백엔드 API]
+    C --> D[작업 큐]
+    D --> E[도면 처리]
+    E --> F[MongoDB]
+    E --> G[S3 스토리지]
+    C --> H[Socket.IO]
+    H --> B
 ```
-1. DWG 파일 업로드
-2. ODA File Converter로 DXF 변환
-3. DXF 파일 파싱 및 분석
-4. SVG 생성 및 최적화
-5. 웹 뷰어 렌더링
-```
 
----
+1. 사용자가 DWG 파일을 업로드
+2. 백엔드에서 작업 ID 생성 및 작업 큐에 추가
+3. 실시간 처리 상태를 Socket.IO로 프론트엔드에 전송
+4. 처리된 결과를 S3에 저장하고 MongoDB에 메타데이터 저장
+5. 처리 완료 시 프론트엔드에서 결과 표시
 
-## 🚀 설치 및 실행
+## 주요 기능
 
-### 📋 요구사항
-- **Node.js** 14.x 이상
-- **npm** 또는 yarn
-- **[ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter)** (필수)
-- **메모리** 최소 2GB 권장
+- DWG 파일 업로드 및 처리
+- 실시간 처리 상태 모니터링
+- 처리된 도면 시각화
+- 레이어 관리 및 필터링
+- 도면 메타데이터 분석
 
-### 📥 설치 과정
+## 기술 스택
 
-1. **저장소 클론**
-   ```bash
-   git clone https://github.com/ktw1021/dwg-plan.git
-   cd dwg-plan
+- **프론트엔드**
+  - React
+  - Socket.IO-client
+  - React Context API
+  - Custom Hooks
+
+- **백엔드**
+  - Node.js
+  - Express
+  - Socket.IO
+  - MongoDB
+  - AWS S3
+
+## 실시간 처리 로직
+
+1. **작업 생성**
+   ```javascript
+   // 프론트엔드
+   const jobId = await createJob(file);
+   useProgress(jobId, handleComplete);
    ```
 
-2. **의존성 설치**
+2. **상태 모니터링**
+   - Socket.IO를 통한 실시간 업데이트
+   - 폴링을 통한 백업 상태 확인
+   ```javascript
+   socket.on('progress', handleProgress);
+   setInterval(checkStatus, 3000);
+   ```
+
+## 설치 및 실행
+
+### 요구사항
+
+- Node.js 14.x 이상(v18.20.2)
+- MongoDB 8.0.9
+- [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter) (v26.4.0)
+- AWS S3 버킷 (또는 대체 스토리지)
+
+### 1. MongoDB 설정
+
+1. [MongoDB Community Server](https://www.mongodb.com/try/download/community) 설치
+2. MongoDB 서비스 실행
    ```bash
-   # 백엔드 의존성 설치
-   cd backend
-   npm install
+   # Windows의 경우 서비스에서 MongoDB 실행 확인
+   # Linux/Mac의 경우
+   sudo service mongod start
+   ```
+
+### 2. ODA File Converter 설정
+
+1. [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter) 다운로드 및 설치
+2. 설치 경로 확인 (환경 변수 설정에 필요)
+   - Windows 일반 설치 경로: `C:\Program Files\ODA\ODAFileConverter\ODAFileConverter.exe`
+   - Mac/Linux: `/usr/local/bin/ODAFileConverter`
+
+### 3. 환경 변수 설정
+
+1. Backend (.env)
+   ```
+   # 서버 설정
+   PORT=5000
+   NODE_ENV=development
+
+   # MongoDB
+   MONGODB_URI=mongodb://localhost:27017/dwg-plan
+
+   # AWS S3
+   AWS_ACCESS_KEY_ID=your_access_key
+   AWS_SECRET_ACCESS_KEY=your_secret_key
+   AWS_REGION=ap-northeast-2
+   AWS_S3_BUCKET=your-bucket-name
+
+   # ODA File Converter(예)
+   ODA_CONVERTER_PATH="C:\\Program Files\\ODA\\ODAFileConverter\\ODAFileConverter.exe"
    
-   # 프론트엔드 의존성 설치  
-   cd ../frontend
-   npm install
+   # 파일 처리 설정
+   MAX_FILE_SIZE=50000000  # 50MB
+   TEMP_DIR=./temp
    ```
 
-3. **ODA File Converter 설치**
-   - [ODA 공식 웹사이트](https://www.opendesign.com/guestfiles/oda_file_converter)에서 다운로드
-   - 시스템에 맞는 버전 설치 (Windows/Mac/Linux)
-   - 환경 변수 설정:
-     ```bash
-     # Windows 예시
-     ODA_CONVERTER_PATH=C:\Program Files\ODA\ODAFileConverter\ODAFileConverter.exe
-     ```
+2. Frontend (.env)
+   ```
+   REACT_APP_API_URL=http://localhost:5000
+   REACT_APP_MAX_FILE_SIZE=10485760
+   ```
 
-### ▶️ 실행 방법
+### 4. 의존성 설치
 
-1. **백엔드 서버 실행**
+```bash
+# Backend
+cd backend
+npm install
+
+# Frontend
+cd frontend
+npm install
+```
+
+### 5. 실행
+
+1. MongoDB 실행 확인
+2. 백엔드 서버 실행
    ```bash
    cd backend
    npm run dev
    ```
-
-2. **프론트엔드 서버 실행** (새 터미널)
+3. 프론트엔드 실행
    ```bash
    cd frontend
    npm start
    ```
+4. 브라우저에서 접속: http://localhost:3000
 
-3. **브라우저에서 접속**
-   ```
-   http://localhost:3000
-   ```
+### 6. 문제 해결
 
----
+#### MongoDB 연결 오류
+- MongoDB 서비스가 실행 중인지 확인
+- MongoDB 포트(27017) 사용 가능 여부 확인
+- MongoDB 접속 URI 확인
 
-## ⚙️ 환경 설정
+#### ODA File Converter 오류
+- ODA File Converter 설치 확인
+- 환경 변수의 경로가 올바른지 확인
+- Windows의 경우 경로에 이스케이프 문자(`\\`) 사용 확인
 
-### 환경 변수 (.env)
-`backend/.env` 파일을 생성하고 다음 변수들을 설정하세요:
+## API 엔드포인트
 
-```env
-# 서버 설정
-PORT=5000
-FRONTEND_URL=http://localhost:3000
+- `POST /api/jobs` - 새 작업 생성
+- `GET /api/jobs/:id` - 작업 상태 조회
+- `GET /api/jobs/:id/result` - 처리 결과 조회
 
-# ODA File Converter 경로
-ODA_CONVERTER_PATH=C:\Program Files\ODA\ODAFileConverter\ODAFileConverter.exe
+## Socket.IO 이벤트
 
----
-
-## 📁 프로젝트 구조
-
-```
-dwg-plan/
-├── backend/                 # Express 서버
-│   ├── server.js           # 메인 서버 파일
-│   ├── routes/             # API 라우트
-│   ├── controllers/        # 비즈니스 로직
-│   ├── utils/             
-│   │   ├── core/          # 핵심 유틸리티
-│   │   │   ├── errors.js    # 에러 클래스
-│   │   │   ├── analyzer.js  # 도면 분석기
-│   │   │   └── doorDetector.js # 문 검출기
-│   │   ├── processors/    # 파일 처리
-│   │   │   ├── main.js      # 메인 처리 로직
-│   │   │   └── dwgConverter.js # DWG 변환기
-│   │   └── renderers/     # 렌더링
-│   │       └── svg.js       # SVG 렌더러
-│   ├── uploads/           # 업로드된 파일
-│   ├── results/           # 변환 결과
-│   └── temp/             # 임시 파일
-│
-├── frontend/              # React 앱
-│   ├── src/
-│   │   ├── components/   # UI 컴포넌트
-│   │   │   ├── FileUpload.js
-│   │   │   ├── ProgressTracker.js
-│   │   │   ├── ResultViewer.js
-│   │   │   └── SVGViewer.js
-│   │   ├── hooks/       # 커스텀 훅
-│   │   │   ├── useViewer.js
-│   │   │   └── useFileUpload.js
-│   │   ├── context/     # 컨텍스트
-│   │   ├── utils/       # 유틸리티
-│   │   └── App.js       # 메인 앱
-│   └── public/          # 정적 파일
-└── README.md
-```
-
----
-
-## 🔧 API 문서
-
-### DWG 파일 처리 API
-- `POST /api/dwg/upload` - DWG 파일 업로드 및 변환 시작
-- `GET /api/dwg/status/:jobId` - 변환 진행 상태 확인  
-- `GET /api/dwg/result/:jobId` - 변환 결과 데이터 조회
-- `GET /api/svg/:jobId` - SVG 파일 직접 다운로드
-
-### WebSocket 이벤트
-- `join` - 특정 작업 ID 방에 참여
-- `progress` - 변환 진행 상황 업데이트
-- `complete` - 변환 완료 알림
+- `join` - 작업 룸 참가
+- `progress` - 처리 진행률 업데이트
 - `error` - 오류 발생 알림
+- `complete` - 작업 완료 알림
 
----
+## 처리 로직
 
-## 🔍 주요 특징
+### 1. 파일 업로드 및 작업 생성
+- 사용자가 DWG 파일 업로드
+- 파일 유효성 검사 (크기, 형식)
+- 작업 ID 생성 및 초기 상태 저장
+- 임시 저장소에 파일 저장
 
-### 인터랙티브 SVG 뷰어
-- **마우스 휠 줌:** 포인터 위치 기준 확대/축소 (0.1x ~ 10x)
-- **드래그 팬:** 클릭 드래그로 도면 이동
-- **스크롤 격리:** SVG 영역에서만 휠 이벤트 처리
-- **상태 유지:** 줌/팬 상태 완벽 보존
+### 2. DWG → DXF 변환
+- ODA File Converter를 사용하여 DWG 파일을 DXF 형식으로 변환
+- 변환된 DXF 파일 저장 및 관리
+- 변환 상태 모니터링
 
-### 실시간 상태 업데이트
-- Socket.IO 기반 양방향 통신
-- 단계별 진행률 실시간 표시
-- 오류 상황 즉시 알림
+### 3. DXF 파일 분석 및 처리
+- DXF 파일 파싱 및 구조 분석
+- 도면 요소 추출 및 정규화
+  - 레이어 정보
+  - 엔티티(선, 호, 텍스트 등) 데이터
+- 문(Door) 감지
+  - ARC 타입 문: 반경 및 각도 기반 감지
+  - INSERT 블록 문: 블록 이름 기반 감지
+- 텍스트 요소 추출 및 분석
 
-### 에러 처리
-- **FileError** - 파일 관련 오류
-- **ConversionError** - 변환 과정 오류
-- **ParsingError** - 파싱 관련 오류
-- **AnalysisError** - 분석 과정 오류
-- **RenderingError** - 렌더링 오류
-- **MemoryError** - 메모리 초과 오류
-- **PerformanceError** - 처리 시간 초과 오류
+### 4. SVG 변환 및 강조
+- DXF 데이터를 SVG 형식으로 변환
+- 감지된 문 위치에 빨간색 박스 표시
+  - 문 중심점 계산
+  - 크기에 맞는 마커 생성
+- 관련 텍스트 레이블 추가
+- SVG 최적화 및 스타일링
 
----
+### 5. 실시간 상태 관리
+- Socket.IO를 통한 진행률 전송
+- 폴링을 통한 백업 상태 확인
+- 처리 단계별 상태 업데이트
+- 오류 발생 시 즉시 알림
 
-## 🐛 문제 해결
+### 6. 결과 처리
+- 최종 SVG 저장
+- 분석 결과 메타데이터 저장
+  - 감지된 문 정보
+  - 텍스트 요소
+  - 레이어 구조
+- 임시 파일 정리
+- 클라이언트에 완료 통보
 
-### ODA File Converter 관련
-**문제:** `ODAFileConverter를 찾을 수 없음`  
-**해결:**
-- ODA File Converter가 올바르게 설치되었는지 확인
-- 환경 변수 `ODA_CONVERTER_PATH` 경로 확인
-- Windows 일반적인 설치 경로:
-  - `C:\Program Files\ODA\ODAFileConverter\ODAFileConverter.exe`
-  - `C:\Program Files (x86)\ODA\ODAFileConverter\ODAFileConverter.exe`
-
-### DWG 파일 변환 오류
-**문제:** `"Output version 'DWG' is invalid"`  
-**해결:** ODA File Converter 커맨드 인자 순서 확인:
-```bash
-# 올바른 순서
-ODAFileConverter "inputDir" "outputDir" "ACAD2018" "DXF" "0" "1"
-```
-
-### 메모리 사용량 초과
-**문제:** `Memory limit exceeded`  
-**해결:** 
-- 더 작은 파일 사용
-- 메모리 제한 증가 (환경 변수 수정)
-- 임시 파일 정리 확인
-
-### 처리 시간 초과
-**문제:** `Processing timeout`  
-**해결:**
-- 더 작은 파일 사용
-- 타임아웃 제한 증가
-- 서버 리소스 확인
-
----
-
-**개발자:** [ktw1021](https://github.com/ktw1021)  
-**저장소:** [dwg-plan](https://github.com/ktw1021/dwg-plan) 
+### 7. 후처리
+- 작업 이력 관리
+- 리소스 정리 
